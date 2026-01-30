@@ -41,7 +41,13 @@ jobs:
       working-directory: build/linux-coverage
       run: |
         # Run tests with JUnit XML output for Codecov test results
-        ./eventhorizon_tests --gtest_output=xml:test-results.xml
+        ./eventhorizon_tests --gtest_output=xml:junit-test-results.xml
+        
+        # Debug: Show test results file
+        echo "=== Test Results XML ==="
+        head -50 junit-test-results.xml || true
+        echo "========================"
+        
         # Also run via ctest for consistency
         ctest --build-config ${{ env.BUILD_TYPE }} --output-on-failure
     
@@ -83,9 +89,8 @@ jobs:
       uses: codecov/test-results-action@v1
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
-        files: build/linux-coverage/test-results.xml
-        flags: unittests
-        name: eventhorizon-tests
+        files: build/linux-coverage/junit-test-results.xml
+        fail_ci_if_error: false
         verbose: true
     
     - name: Upload Coverage Report Artifact
