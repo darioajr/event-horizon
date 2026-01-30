@@ -1,0 +1,96 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Configure Debug",
+            "type": "shell",
+            "command": "cmake",
+            "args": ["--preset", "windows-debug"],
+            "group": "build",
+            "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "Configure Release",
+            "type": "shell",
+            "command": "cmake",
+            "args": ["--preset", "windows-release"],
+            "group": "build",
+            "problemMatcher": "$msCompile"
+        },
+        {
+            "label": "Build Debug",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build",
+                "${workspaceFolder}/build/windows-debug",
+                "--config",
+                "Debug",
+                "--parallel"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": "$msCompile",
+            "dependsOn": "Configure Debug"
+        },
+        {
+            "label": "Build Release",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build",
+                "${workspaceFolder}/build/windows-release",
+                "--config",
+                "Release",
+                "--parallel"
+            ],
+            "group": "build",
+            "problemMatcher": "$msCompile",
+            "dependsOn": "Configure Release"
+        },
+        {
+            "label": "Run Tests (Debug)",
+            "type": "shell",
+            "command": "${workspaceFolder}/build/windows-debug/Debug/eventhorizon_tests.exe",
+            "args": ["--gtest_color=yes"],
+            "group": "test",
+            "problemMatcher": "$msCompile",
+            "dependsOn": "Build Debug"
+        },
+        {
+            "label": "Run Tests (Release)",
+            "type": "shell",
+            "command": "${workspaceFolder}/build/windows-release/Release/eventhorizon_tests.exe",
+            "args": ["--gtest_color=yes"],
+            "group": "test",
+            "problemMatcher": "$msCompile",
+            "dependsOn": "Build Release"
+        },
+        {
+            "label": "Clean Debug",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build",
+                "${workspaceFolder}/build/windows-debug",
+                "--target",
+                "clean"
+            ],
+            "problemMatcher": []
+        },
+        {
+            "label": "Clean Release",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build",
+                "${workspaceFolder}/build/windows-release",
+                "--target",
+                "clean"
+            ],
+            "problemMatcher": []
+        }
+    ]
+}
