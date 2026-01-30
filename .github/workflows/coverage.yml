@@ -86,10 +86,13 @@ jobs:
     
     - name: Upload Test Results to Codecov
       if: ${{ !cancelled() }}
-      uses: codecov/test-results-action@v1
+      uses: codecov/codecov-action@v5
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         files: build/linux-coverage/junit-test-results.xml
+        report_type: test_results
+        flags: unittests
+        name: eventhorizon-tests
         fail_ci_if_error: false
         verbose: true
     
