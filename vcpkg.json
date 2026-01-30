@@ -6,17 +6,42 @@
   "license": "MIT",
   "supports": "(windows & x64) | ((linux | osx) & (x64 | arm64))",
   "dependencies": [
-    "boost-asio",
-    "boost-system",
-    "nlohmann-json"
+    {
+      "name": "boost-asio",
+      "version>=": "1.90.0"
+    },
+    {
+      "name": "boost-system",
+      "version>=": "1.90.0"
+    },
+    {
+      "name": "nlohmann-json",
+      "version>=": "3.12.0"
+    }
   ],
-  "overrides": [],
+  "overrides": [
+    {
+      "name": "boost-asio",
+      "version": "1.90.0"
+    },
+    {
+      "name": "boost-system",
+      "version": "1.90.0"
+    },
+    {
+      "name": "nlohmann-json",
+      "version": "3.12.0"
+    }
+  ],
   "builtin-baseline": "75a2e14262fc23c1f03bac18e135c4866dd25b51",
   "features": {
     "tests": {
       "description": "Build tests",
       "dependencies": [
-        "gtest"
+        {
+          "name": "gtest",
+          "version>=": "1.14.0"
+        }
       ]
     }
   }
