@@ -352,7 +352,7 @@ jobs:
   # ==========================================================================
   # Windows x64 Static Build
   # ==========================================================================
-  build-windows-static:
+  windows-x64-static:
     runs-on: windows-latest
     needs: version
     
@@ -402,7 +402,7 @@ jobs:
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: event-horizon-${{ needs.version.outputs.version_full }}-windows-static
+        name: event-horizon-${{ needs.version.outputs.version_full }}-windows-x64-static
         path: build/windows-ninja-static/event_horizon.exe
         retention-days: 30
 
@@ -410,7 +410,7 @@ jobs:
   # Create Release
   # ==========================================================================
   release:
-    needs: [version, build-linux-x64, build-windows-static]
+    needs: [version, build-linux-x64, windows-x64-static]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     
@@ -432,8 +432,8 @@ jobs:
           -C ./artifacts/event-horizon-${VERSION}-linux-x64 event_horizon
         
         # Windows Static
-        zip -j event-horizon-${VERSION}-windows-static.zip \
-          ./artifacts/event-horizon-${VERSION}-windows-static/event_horizon.exe
+        zip -j event-horizon-${VERSION}-windows-x64-static.zip \
+          ./artifacts/event-horizon-${VERSION}-windows-x64-static/event_horizon.exe
         
         # List created files
         ls -la *.tar.gz *.zip
@@ -448,6 +448,6 @@ jobs:
         generate_release_notes: true
         files: |
           event-horizon-${{ needs.version.outputs.version_full }}-linux-x64.tar.gz
-          event-horizon-${{ needs.version.outputs.version_full }}-windows-static.zip
+          event-horizon-${{ needs.version.outputs.version_full }}-windows-x64-static.zip
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
