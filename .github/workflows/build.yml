@@ -28,7 +28,7 @@ jobs:
     - name: Setup vcpkg
       uses: lukka/run-vcpkg@v11
       with:
-        vcpkgGitCommitId: '2024.01.12'
+        vcpkgGitCommitId: '75a2e14262fc23c1f03bac18e135c4866dd25b51'
     
     - name: Create vcpkg cache directory
       run: mkdir -p ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
@@ -72,7 +72,7 @@ jobs:
     - name: Setup vcpkg
       uses: lukka/run-vcpkg@v11
       with:
-        vcpkgGitCommitId: '2024.01.12'
+        vcpkgGitCommitId: '75a2e14262fc23c1f03bac18e135c4866dd25b51'
     
     - name: Create vcpkg cache directory
       run: New-Item -ItemType Directory -Force -Path ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
@@ -116,7 +116,7 @@ jobs:
     - name: Setup vcpkg
       uses: lukka/run-vcpkg@v11
       with:
-        vcpkgGitCommitId: '2024.01.12'
+        vcpkgGitCommitId: '75a2e14262fc23c1f03bac18e135c4866dd25b51'
     
     - name: Create vcpkg cache directory
       run: New-Item -ItemType Directory -Force -Path ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
