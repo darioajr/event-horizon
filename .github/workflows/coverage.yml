@@ -39,7 +39,11 @@ jobs:
     
     - name: Run Tests
       working-directory: build/linux-coverage
-      run: ctest --build-config ${{ env.BUILD_TYPE }} --output-on-failure
+      run: |
+        # Run tests with JUnit XML output for Codecov test results
+        ./eventhorizon_tests --gtest_output=xml:test-results.xml
+        # Also run via ctest for consistency
+        ctest --build-config ${{ env.BUILD_TYPE }} --output-on-failure
     
     - name: Generate Coverage Report
       working-directory: build/linux-coverage
@@ -64,7 +68,7 @@ jobs:
         # Show summary
         lcov --list coverage.info
     
-    - name: Upload to Codecov
+    - name: Upload Coverage to Codecov
       uses: codecov/codecov-action@v5
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
@@ -72,6 +76,16 @@ jobs:
         flags: unittests
         name: eventhorizon-coverage
         fail_ci_if_error: false
+        verbose: true
+    
+    - name: Upload Test Results to Codecov
+      if: ${{ !cancelled() }}
+      uses: codecov/test-results-action@v1
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        files: build/linux-coverage/test-results.xml
+        flags: unittests
+        name: eventhorizon-tests
         verbose: true
     
     - name: Upload Coverage Report Artifact
