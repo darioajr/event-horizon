@@ -416,6 +416,17 @@ jobs:
     
     steps:
     - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Full history for changelog generation
+    
+    - name: Generate Changelog
+      uses: orhun/git-cliff-action@v4
+      id: changelog
+      with:
+        config: cliff.toml
+        args: --latest --strip header
+      env:
+        OUTPUT: CHANGELOG_RELEASE.md
     
     - name: Download all artifacts
       uses: actions/download-artifact@v4
@@ -443,9 +454,9 @@ jobs:
       with:
         tag_name: v${{ needs.version.outputs.version_full }}
         name: Release v${{ needs.version.outputs.version_full }}
+        body: ${{ steps.changelog.outputs.content }}
         draft: false
         prerelease: false
-        generate_release_notes: true
         files: |
           event-horizon-${{ needs.version.outputs.version_full }}-linux-x64.tar.gz
           event-horizon-${{ needs.version.outputs.version_full }}-windows-x64-static.zip

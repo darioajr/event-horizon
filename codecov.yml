@@ -1,0 +1,44 @@
+# codecov.yml - Configuração do Codecov
+# https://docs.codecov.com/docs/codecov-yaml
+
+coverage:
+  precision: 2
+  round: down
+  range: "70...100"
+  
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 1%
+        informational: false
+    patch:
+      default:
+        target: auto
+        threshold: 1%
+
+parsers:
+  gcov:
+    branch_detection:
+      conditional: yes
+      loop: yes
+      method: no
+      macro: no
+
+comment:
+  layout: "reach,diff,flags,files"
+  behavior: default
+  require_changes: false
+  require_base: false
+  require_head: true
+
+ignore:
+  - "src/tests/**/*"
+  - "build/**/*"
+  - "**/test_*.cpp"
+
+flags:
+  unittests:
+    paths:
+      - src/
+    carryforward: true

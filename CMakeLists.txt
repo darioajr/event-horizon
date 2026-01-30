@@ -44,6 +44,18 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Opções de compilação
 option(BUILD_TESTS "Build test executables" ON)
+option(CODE_COVERAGE "Enable code coverage (GCC/Clang only)" OFF)
+
+# ============================================================================
+# Code Coverage (gcov/llvm-cov)
+# ============================================================================
+if(CODE_COVERAGE AND NOT MSVC)
+    message(STATUS "Code coverage enabled")
+    set(COVERAGE_FLAGS "--coverage -fprofile-arcs -ftest-coverage")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${COVERAGE_FLAGS}")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${COVERAGE_FLAGS}")
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${COVERAGE_FLAGS}")
+endif()
 
 # Configurações de warning
 if(MSVC)
@@ -171,4 +183,5 @@ message(STATUS "  Build Number:   ${BUILD_NUMBER}")
 message(STATUS "  C++ Standard:   ${CMAKE_CXX_STANDARD}")
 message(STATUS "  Build Type:     ${CMAKE_BUILD_TYPE}")
 message(STATUS "  Build Tests:    ${BUILD_TESTS}")
+message(STATUS "  Code Coverage:  ${CODE_COVERAGE}")
 message(STATUS "")

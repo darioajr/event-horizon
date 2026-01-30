@@ -1,0 +1,79 @@
+name: Code Coverage
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  BUILD_TYPE: Debug
+  VCPKG_COMMIT: '75a2e14262fc23c1f03bac18e135c4866dd25b51'
+
+jobs:
+  coverage:
+    runs-on: ubuntu-24.04
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ninja-build gcc-14 g++-14 lcov
+        sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100
+        sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 100
+        sudo update-alternatives --install /usr/bin/gcov gcov /usr/bin/gcov-14 100
+    
+    - name: Setup vcpkg
+      uses: lukka/run-vcpkg@v11
+      with:
+        vcpkgGitCommitId: ${{ env.VCPKG_COMMIT }}
+    
+    - name: Configure CMake with Coverage
+      run: |
+        cmake --preset linux-coverage
+    
+    - name: Build
+      run: cmake --build build/linux-coverage --config ${{ env.BUILD_TYPE }}
+    
+    - name: Run Tests
+      working-directory: build/linux-coverage
+      run: ctest --build-config ${{ env.BUILD_TYPE }} --output-on-failure
+    
+    - name: Generate Coverage Report
+      working-directory: build/linux-coverage
+      run: |
+        # Capture coverage info
+        lcov --capture --directory . --output-file coverage.info --gcov-tool gcov-14
+        
+        # Remove external dependencies from coverage
+        lcov --remove coverage.info \
+          '/usr/*' \
+          '*/vcpkg_installed/*' \
+          '*/_deps/*' \
+          '*/tests/*' \
+          --output-file coverage.info
+        
+        # Generate HTML report (optional, for local viewing)
+        genhtml coverage.info --output-directory coverage-report
+        
+        # Show summary
+        lcov --list coverage.info
+    
+    - name: Upload to Codecov
+      uses: codecov/codecov-action@v5
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        files: build/linux-coverage/coverage.info
+        flags: unittests
+        name: eventhorizon-coverage
+        fail_ci_if_error: false
+        verbose: true
+    
+    - name: Upload Coverage Report Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-report
+        path: build/linux-coverage/coverage-report/
+        retention-days: 7

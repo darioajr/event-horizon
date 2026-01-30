@@ -40,6 +40,22 @@
       }
     },
     {
+      "name": "linux-coverage",
+      "displayName": "Linux x64 Coverage",
+      "inherits": "base",
+      "generator": "Ninja",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "VCPKG_TARGET_TRIPLET": "x64-linux",
+        "CODE_COVERAGE": "ON"
+      }
+    },
+    {
       "name": "linux-arm64-release",
       "displayName": "Linux ARM64 Release",
       "inherits": "base",
