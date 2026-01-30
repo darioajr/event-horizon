@@ -20,6 +20,11 @@ void signal_handler(int signal) {
     }
 }
 
+// Version from CMake
+#ifndef EVENT_HORIZON_VERSION
+#define EVENT_HORIZON_VERSION "1.0.0+0"
+#endif
+
 void print_banner() {
     std::println(R"(
  _____                _     _   _            _                
@@ -28,9 +33,8 @@ void print_banner() {
 |  __\ \ / / _ \ '_ \| __| |  _  |/ _ \| '__| |_  / _ \| '_ \ 
 | |___\ V /  __/ | | | |_  | | | | (_) | |  | |/ / (_) | | | |
 \____/ \_/ \___|_| |_|\__| \_| |_/\___/|_|  |_/___\___/|_| |_|
-
-Kafka-Compatible Event Streaming Platform - v1.0.0
 )");
+    std::println("Kafka-Compatible Event Streaming Platform - v{}\n", EVENT_HORIZON_VERSION);
 }
 
 void print_usage(const char* program) {

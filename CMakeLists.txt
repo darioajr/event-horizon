@@ -1,5 +1,25 @@
 cmake_minimum_required(VERSION 3.16)
-project(event_horizon VERSION 1.0.0 LANGUAGES CXX)
+
+# ============================================================================
+# Versionamento
+# ============================================================================
+
+# Ler versão base do arquivo version.txt
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/version.txt" VERSION_CONTENT)
+string(STRIP "${VERSION_CONTENT}" VERSION_BASE)
+
+# Variáveis de versão (podem ser sobrescritas via -D)
+set(VERSION_SUFFIX "" CACHE STRING "Version suffix (e.g., -dev, -feature)")
+set(BUILD_NUMBER "0" CACHE STRING "Build number from CI")
+
+# Compor versão completa
+if(VERSION_SUFFIX)
+    set(VERSION_FULL "${VERSION_BASE}${VERSION_SUFFIX}+${BUILD_NUMBER}")
+else()
+    set(VERSION_FULL "${VERSION_BASE}+${BUILD_NUMBER}")
+endif()
+
+project(event_horizon VERSION ${VERSION_BASE} LANGUAGES CXX)
 
 # ============================================================================
 # Verificar arquitetura suportada (x64 ou ARM64)
@@ -49,6 +69,14 @@ add_library(eventhorizon_lib STATIC
     src/protocol/kafka_protocol.cpp
     src/network/server.cpp
     src/broker/broker.cpp
+)
+
+# Definir versão como macros de compilação
+target_compile_definitions(eventhorizon_lib PUBLIC
+    EVENT_HORIZON_VERSION="${VERSION_FULL}"
+    EVENT_HORIZON_VERSION_BASE="${VERSION_BASE}"
+    EVENT_HORIZON_VERSION_SUFFIX="${VERSION_SUFFIX}"
+    EVENT_HORIZON_BUILD_NUMBER="${BUILD_NUMBER}"
 )
 
 target_include_directories(eventhorizon_lib PUBLIC
@@ -130,7 +158,10 @@ install(DIRECTORY src/
 
 message(STATUS "")
 message(STATUS "Event Horizon Configuration:")
-message(STATUS "  Version:        ${PROJECT_VERSION}")
+message(STATUS "  Version:        ${VERSION_FULL}")
+message(STATUS "  Version Base:   ${VERSION_BASE}")
+message(STATUS "  Version Suffix: ${VERSION_SUFFIX}")
+message(STATUS "  Build Number:   ${BUILD_NUMBER}")
 message(STATUS "  C++ Standard:   ${CMAKE_CXX_STANDARD}")
 message(STATUS "  Build Type:     ${CMAKE_BUILD_TYPE}")
 message(STATUS "  Build Tests:    ${BUILD_TESTS}")
