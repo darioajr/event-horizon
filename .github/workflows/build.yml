@@ -9,12 +9,13 @@ on:
 env:
   BUILD_TYPE: Release
   VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
+  VCPKG_COMMIT: '75a2e14262fc23c1f03bac18e135c4866dd25b51'
 
 jobs:
   # ==========================================================================
-  # Linux Build
+  # Linux x64 Build
   # ==========================================================================
-  build-linux:
+  build-linux-x64:
     runs-on: ubuntu-latest
     
     steps:
@@ -28,7 +29,7 @@ jobs:
     - name: Setup vcpkg
       uses: lukka/run-vcpkg@v11
       with:
-        vcpkgGitCommitId: '75a2e14262fc23c1f03bac18e135c4866dd25b51'
+        vcpkgGitCommitId: ${{ env.VCPKG_COMMIT }}
     
     - name: Create vcpkg cache directory
       run: mkdir -p ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
@@ -37,17 +38,15 @@ jobs:
       uses: actions/cache@v4
       with:
         path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
-        key: vcpkg-linux-${{ hashFiles('vcpkg.json') }}
+        key: vcpkg-linux-x64-${{ hashFiles('vcpkg.json') }}
         restore-keys: |
-          vcpkg-linux-
+          vcpkg-linux-x64-
     
     - name: Configure CMake
-      run: |
-        cmake --preset linux-release
+      run: cmake --preset linux-release
     
     - name: Build
-      run: |
-        cmake --build build/linux-release --config ${{ env.BUILD_TYPE }}
+      run: cmake --build build/linux-release --config ${{ env.BUILD_TYPE }}
     
     - name: Test
       working-directory: build/linux-release
@@ -56,14 +55,151 @@ jobs:
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: event-horizon-linux
+        name: event-horizon-linux-x64
         path: build/linux-release/event_horizon
         retention-days: 7
 
   # ==========================================================================
-  # Windows Build
+  # Linux ARM64 Build
   # ==========================================================================
-  build-windows:
+  build-linux-arm64:
+    runs-on: ubuntu-24.04-arm
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ninja-build
+    
+    - name: Setup vcpkg
+      uses: lukka/run-vcpkg@v11
+      with:
+        vcpkgGitCommitId: ${{ env.VCPKG_COMMIT }}
+    
+    - name: Create vcpkg cache directory
+      run: mkdir -p ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+    
+    - name: Cache vcpkg packages
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+        key: vcpkg-linux-arm64-${{ hashFiles('vcpkg.json') }}
+        restore-keys: |
+          vcpkg-linux-arm64-
+    
+    - name: Configure CMake
+      run: cmake --preset linux-arm64-release
+    
+    - name: Build
+      run: cmake --build build/linux-arm64-release --config ${{ env.BUILD_TYPE }}
+    
+    - name: Test
+      working-directory: build/linux-arm64-release
+      run: ctest --build-config ${{ env.BUILD_TYPE }} --output-on-failure
+    
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: event-horizon-linux-arm64
+        path: build/linux-arm64-release/event_horizon
+        retention-days: 7
+
+  # ==========================================================================
+  # macOS x64 Build
+  # ==========================================================================
+  build-macos-x64:
+    runs-on: macos-13
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install dependencies
+      run: brew install ninja
+    
+    - name: Setup vcpkg
+      uses: lukka/run-vcpkg@v11
+      with:
+        vcpkgGitCommitId: ${{ env.VCPKG_COMMIT }}
+    
+    - name: Create vcpkg cache directory
+      run: mkdir -p ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+    
+    - name: Cache vcpkg packages
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+        key: vcpkg-macos-x64-${{ hashFiles('vcpkg.json') }}
+        restore-keys: |
+          vcpkg-macos-x64-
+    
+    - name: Configure CMake
+      run: cmake --preset macos-release
+    
+    - name: Build
+      run: cmake --build build/macos-release --config ${{ env.BUILD_TYPE }}
+    
+    - name: Test
+      working-directory: build/macos-release
+      run: ctest --build-config ${{ env.BUILD_TYPE }} --output-on-failure
+    
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: event-horizon-macos-x64
+        path: build/macos-release/event_horizon
+        retention-days: 7
+
+  # ==========================================================================
+  # macOS ARM64 Build (Apple Silicon)
+  # ==========================================================================
+  build-macos-arm64:
+    runs-on: macos-14
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install dependencies
+      run: brew install ninja
+    
+    - name: Setup vcpkg
+      uses: lukka/run-vcpkg@v11
+      with:
+        vcpkgGitCommitId: ${{ env.VCPKG_COMMIT }}
+    
+    - name: Create vcpkg cache directory
+      run: mkdir -p ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+    
+    - name: Cache vcpkg packages
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+        key: vcpkg-macos-arm64-${{ hashFiles('vcpkg.json') }}
+        restore-keys: |
+          vcpkg-macos-arm64-
+    
+    - name: Configure CMake
+      run: cmake --preset macos-arm64-release
+    
+    - name: Build
+      run: cmake --build build/macos-arm64-release --config ${{ env.BUILD_TYPE }}
+    
+    - name: Test
+      working-directory: build/macos-arm64-release
+      run: ctest --build-config ${{ env.BUILD_TYPE }} --output-on-failure
+    
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: event-horizon-macos-arm64
+        path: build/macos-arm64-release/event_horizon
+        retention-days: 7
+
+  # ==========================================================================
+  # Windows x64 Build
+  # ==========================================================================
+  build-windows-x64:
     runs-on: windows-latest
     
     steps:
@@ -72,7 +208,7 @@ jobs:
     - name: Setup vcpkg
       uses: lukka/run-vcpkg@v11
       with:
-        vcpkgGitCommitId: '75a2e14262fc23c1f03bac18e135c4866dd25b51'
+        vcpkgGitCommitId: ${{ env.VCPKG_COMMIT }}
     
     - name: Create vcpkg cache directory
       run: New-Item -ItemType Directory -Force -Path ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
@@ -81,17 +217,15 @@ jobs:
       uses: actions/cache@v4
       with:
         path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
-        key: vcpkg-windows-${{ hashFiles('vcpkg.json') }}
+        key: vcpkg-windows-x64-${{ hashFiles('vcpkg.json') }}
         restore-keys: |
-          vcpkg-windows-
+          vcpkg-windows-x64-
     
     - name: Configure CMake
-      run: |
-        cmake --preset windows-release
+      run: cmake --preset windows-release
     
     - name: Build
-      run: |
-        cmake --build build/windows-release --config ${{ env.BUILD_TYPE }}
+      run: cmake --build build/windows-release --config ${{ env.BUILD_TYPE }}
     
     - name: Test
       working-directory: build/windows-release
@@ -100,12 +234,12 @@ jobs:
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: event-horizon-windows
+        name: event-horizon-windows-x64
         path: build/windows-release/${{ env.BUILD_TYPE }}/event_horizon.exe
         retention-days: 7
 
   # ==========================================================================
-  # Windows Static Build
+  # Windows x64 Static Build
   # ==========================================================================
   build-windows-static:
     runs-on: windows-latest
@@ -116,7 +250,7 @@ jobs:
     - name: Setup vcpkg
       uses: lukka/run-vcpkg@v11
       with:
-        vcpkgGitCommitId: '75a2e14262fc23c1f03bac18e135c4866dd25b51'
+        vcpkgGitCommitId: ${{ env.VCPKG_COMMIT }}
     
     - name: Create vcpkg cache directory
       run: New-Item -ItemType Directory -Force -Path ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
@@ -130,12 +264,10 @@ jobs:
           vcpkg-windows-static-
     
     - name: Configure CMake (Static)
-      run: |
-        cmake --preset windows-static
+      run: cmake --preset windows-static
     
     - name: Build
-      run: |
-        cmake --build build/windows-static --config ${{ env.BUILD_TYPE }}
+      run: cmake --build build/windows-static --config ${{ env.BUILD_TYPE }}
     
     - name: Upload artifact
       uses: actions/upload-artifact@v4
@@ -148,21 +280,39 @@ jobs:
   # Create Release
   # ==========================================================================
   release:
-    needs: [build-linux, build-windows, build-windows-static]
+    needs: [build-linux-x64, build-linux-arm64, build-macos-x64, build-macos-arm64, build-windows-x64, build-windows-static]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     
     steps:
-    - name: Download Linux artifact
+    - name: Download Linux x64 artifact
       uses: actions/download-artifact@v4
       with:
-        name: event-horizon-linux
-        path: ./linux
+        name: event-horizon-linux-x64
+        path: ./linux-x64
+
+    - name: Download Linux ARM64 artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: event-horizon-linux-arm64
+        path: ./linux-arm64
+
+    - name: Download macOS x64 artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: event-horizon-macos-x64
+        path: ./macos-x64
+
+    - name: Download macOS ARM64 artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: event-horizon-macos-arm64
+        path: ./macos-arm64
     
     - name: Download Windows artifact
       uses: actions/download-artifact@v4
       with:
-        name: event-horizon-windows
+        name: event-horizon-windows-x64
         path: ./windows
     
     - name: Download Windows Static artifact
@@ -173,8 +323,14 @@ jobs:
     
     - name: Create archives
       run: |
-        chmod +x ./linux/event_horizon
-        tar -czvf event-horizon-linux-x64.tar.gz -C ./linux event_horizon
+        chmod +x ./linux-x64/event_horizon
+        chmod +x ./linux-arm64/event_horizon
+        chmod +x ./macos-x64/event_horizon
+        chmod +x ./macos-arm64/event_horizon
+        tar -czvf event-horizon-linux-x64.tar.gz -C ./linux-x64 event_horizon
+        tar -czvf event-horizon-linux-arm64.tar.gz -C ./linux-arm64 event_horizon
+        tar -czvf event-horizon-macos-x64.tar.gz -C ./macos-x64 event_horizon
+        tar -czvf event-horizon-macos-arm64.tar.gz -C ./macos-arm64 event_horizon
         zip -j event-horizon-windows-x64.zip ./windows/event_horizon.exe
         zip -j event-horizon-windows-x64-static.zip ./windows-static/event_horizon.exe
     
@@ -184,5 +340,8 @@ jobs:
       with:
         files: |
           event-horizon-linux-x64.tar.gz
+          event-horizon-linux-arm64.tar.gz
+          event-horizon-macos-x64.tar.gz
+          event-horizon-macos-arm64.tar.gz
           event-horizon-windows-x64.zip
           event-horizon-windows-x64-static.zip
