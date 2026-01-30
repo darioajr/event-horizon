@@ -8,7 +8,6 @@ namespace fs = std::filesystem;
 // ============================================================================
 // Constantes
 // ============================================================================
-constexpr int64_t MAX_SEGMENT_SIZE = 1024 * 1024 * 1024; // 1GB por segment
 constexpr size_t MAX_RECORDS_PER_SEGMENT = 10000000;     // 10M records
 
 // ============================================================================
@@ -19,8 +18,8 @@ Partition::Partition(const std::string& topic, int32_t partition_id,
                      const std::string& log_dir)
     : topic_(topic)
     , partition_id_(partition_id)
-    , log_end_offset_(0)
-    , log_start_offset_(0) {
+    , log_start_offset_(0)
+    , log_end_offset_(0) {
     
     // Criar diretório da partição
     partition_dir_ = log_dir + "/" + topic + "-" + std::to_string(partition_id);
@@ -196,7 +195,7 @@ bool Partition::should_roll_segment() const {
     }
     
     const auto& active = segments_.back();
-    return active->size() >= MAX_RECORDS_PER_SEGMENT;
+    return static_cast<int64_t>(active->size()) >= static_cast<int64_t>(MAX_RECORDS_PER_SEGMENT);
 }
 
 void Partition::roll_segment() {
@@ -221,6 +220,21 @@ std::string Partition::get_topic() const {
 
 int32_t Partition::get_partition_id() const {
     return partition_id_;
+}
+
+int64_t Partition::get_size_bytes() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    int64_t total = 0;
+    for (const auto& segment : segments_) {
+        total += segment->get_size_bytes();
+    }
+    return total;
+}
+
+int32_t Partition::get_segment_count() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return static_cast<int32_t>(segments_.size());
 }
 
 void Partition::flush() {

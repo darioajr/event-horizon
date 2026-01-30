@@ -107,10 +107,10 @@ jobs:
         retention-days: 7
 
   # ==========================================================================
-  # macOS x64 Build
+  # macOS x64 Build (Intel)
   # ==========================================================================
   build-macos-x64:
-    runs-on: macos-13
+    runs-on: macos-15-intel
     
     steps:
     - uses: actions/checkout@v4
@@ -222,20 +222,20 @@ jobs:
           vcpkg-windows-x64-
     
     - name: Configure CMake
-      run: cmake --preset windows-release
+      run: cmake --preset windows-ninja
     
     - name: Build
-      run: cmake --build build/windows-release --config ${{ env.BUILD_TYPE }}
+      run: cmake --build build/windows-ninja --config ${{ env.BUILD_TYPE }}
     
     - name: Test
-      working-directory: build/windows-release
+      working-directory: build/windows-ninja
       run: ctest --build-config ${{ env.BUILD_TYPE }} --output-on-failure
     
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: event-horizon-windows-x64
-        path: build/windows-release/${{ env.BUILD_TYPE }}/event_horizon.exe
+        path: build/windows-ninja/event_horizon.exe
         retention-days: 7
 
   # ==========================================================================
@@ -264,16 +264,16 @@ jobs:
           vcpkg-windows-static-
     
     - name: Configure CMake (Static)
-      run: cmake --preset windows-static
+      run: cmake --preset windows-ninja-static
     
     - name: Build
-      run: cmake --build build/windows-static --config ${{ env.BUILD_TYPE }}
+      run: cmake --build build/windows-ninja-static --config ${{ env.BUILD_TYPE }}
     
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: event-horizon-windows-static
-        path: build/windows-static/${{ env.BUILD_TYPE }}/event_horizon.exe
+        path: build/windows-ninja-static/event_horizon.exe
         retention-days: 7
 
   # ==========================================================================

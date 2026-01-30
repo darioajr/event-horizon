@@ -262,12 +262,20 @@ struct BrokerVersion {
     std::string commit_id = "unknown";
 };
 
+// Partition detail info for DescribeLogDirs
+struct PartitionDetailInfo {
+    int32_t partition_id = 0;
+    int64_t size_bytes = 0;
+    int32_t segment_count = 1;
+};
+
 // Topic info for metadata
 struct TopicInfo {
     std::string name;
     int32_t num_partitions;
     int16_t replication_factor;
     bool is_internal = false;
+    std::vector<PartitionDetailInfo> partition_details;  // Optional, for DescribeLogDirs
 };
 
 // Consumer group info
@@ -355,6 +363,8 @@ private:
                                                   BufferReader& reader);
     std::vector<uint8_t> handle_create_partitions(const RequestHeader& header, 
                                                    BufferReader& reader);
+    std::vector<uint8_t> handle_describe_log_dirs(const RequestHeader& header, 
+                                                   BufferReader& reader);
     
     // Resposta de erro genérica
     std::vector<uint8_t> make_error_response(const RequestHeader& header, 
@@ -364,7 +374,7 @@ private:
     std::vector<ApiVersionInfo> supported_apis_;
     
     // Broker info
-    int32_t broker_id_ = 0;
+    int32_t broker_id_ = 1;
     std::string broker_host_ = "localhost";
     int32_t broker_port_ = 9092;
     std::string cluster_id_ = "event-horizon-cluster";

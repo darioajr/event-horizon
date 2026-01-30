@@ -433,6 +433,9 @@ RequestHeader RequestHeader::parse(BufferReader& reader) {
         case ApiKey::CreatePartitions:
             flexible_header = (header.api_version >= 2);  // Kafka 4.1: v2+ uses Request Header v2
             break;
+        case ApiKey::DescribeLogDirs:
+            flexible_header = (header.api_version >= 2);  // Kafka 4.1: v2+ uses Request Header v2
+            break;
         default:
             flexible_header = false;
             break;
@@ -492,6 +495,7 @@ KafkaProtocolHandler::KafkaProtocolHandler() {
         {ApiKey::DescribeConfigs, 4, 4},   // v4 flexible, v4 max in 4.1
         {ApiKey::InitProducerId, 4, 5},    // v4+ flexible, v5 max in 4.1
         {ApiKey::CreatePartitions, 2, 3},  // v2+ flexible, v3 max in 4.1
+        {ApiKey::DescribeLogDirs, 2, 4},   // v2+ flexible, v4 max in 4.1
     };
     
     // Versão compatível com Kafka 4.1.x
@@ -604,6 +608,8 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_request(
                 return handle_init_producer_id(header, reader);
             case ApiKey::CreatePartitions:
                 return handle_create_partitions(header, reader);
+            case ApiKey::DescribeLogDirs:
+                return handle_describe_log_dirs(header, reader);
             default:
                 std::cerr << "Unsupported API: " << static_cast<int>(header.api_key) << "\n";
                 return make_error_response(header, ErrorCode::UnsupportedVersion);
@@ -939,8 +945,8 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_produce(
             reader.read_nullable_string(); // transactional_id
         }
     }
-    int16_t acks = reader.read_int16();
-    int32_t timeout = reader.read_int32();
+    [[maybe_unused]] int16_t acks = reader.read_int16();
+    [[maybe_unused]] int32_t timeout = reader.read_int32();
     
     BufferWriter writer;
     writer.write_int32(header.correlation_id);
@@ -952,7 +958,7 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_produce(
     
     // Skip parsing topics - just return empty response
     // Parse topics count
-    int32_t topic_count;
+    [[maybe_unused]] int32_t topic_count;
     if (is_flexible) {
         uint32_t n = reader.read_unsigned_varint();
         topic_count = (n > 0) ? static_cast<int32_t>(n - 1) : 0;
@@ -981,7 +987,7 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_produce(
 }
 
 std::vector<uint8_t> KafkaProtocolHandler::handle_fetch(
-    const RequestHeader& header, BufferReader& reader) {
+    const RequestHeader& header, [[maybe_unused]] BufferReader& reader) {
     
     BufferWriter writer;
     writer.write_int32(header.correlation_id);
@@ -1450,11 +1456,91 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_describe_configs(
             writer.write_string(resource.resource_name);
         }
         
-        // configs array - empty (no configs to report)
+        // configs array - return common topic configs for TOPIC resource type (2)
+        std::vector<std::pair<std::string, std::string>> configs;
+        if (resource.resource_type == 2) { // TOPIC
+            configs = {
+                {"cleanup.policy", "delete"},
+                {"compression.type", "producer"},
+                {"delete.retention.ms", "86400000"},
+                {"file.delete.delay.ms", "60000"},
+                {"flush.messages", "9223372036854775807"},
+                {"flush.ms", "9223372036854775807"},
+                {"index.interval.bytes", "4096"},
+                {"max.compaction.lag.ms", "9223372036854775807"},
+                {"max.message.bytes", "1048588"},
+                {"message.timestamp.type", "CreateTime"},
+                {"min.cleanable.dirty.ratio", "0.5"},
+                {"min.compaction.lag.ms", "0"},
+                {"min.insync.replicas", "1"},
+                {"retention.bytes", "-1"},
+                {"retention.ms", "604800000"},
+                {"segment.bytes", "1073741824"},
+                {"segment.index.bytes", "10485760"},
+                {"segment.jitter.ms", "0"},
+                {"segment.ms", "604800000"},
+            };
+        }
+        
         if (flexible) {
-            writer.write_unsigned_varint(1); // 0 configs + 1
+            writer.write_unsigned_varint(static_cast<uint32_t>(configs.size() + 1));
         } else {
-            writer.write_int32(0);
+            writer.write_int32(static_cast<int32_t>(configs.size()));
+        }
+        
+        for (const auto& [name, value] : configs) {
+            // config_name
+            if (flexible) {
+                writer.write_compact_string(name);
+            } else {
+                writer.write_string(name);
+            }
+            
+            // config_value (nullable)
+            if (flexible) {
+                writer.write_compact_nullable_string(value);
+            } else {
+                writer.write_string(value);
+            }
+            
+            // read_only
+            writer.write_bool(false);
+            
+            // config_source (v1+): 5 = DEFAULT_CONFIG
+            if (header.api_version >= 1) {
+                writer.write_int8(5);
+            }
+            
+            // is_sensitive
+            writer.write_bool(false);
+            
+            // synonyms (v1+) - empty array
+            if (header.api_version >= 1) {
+                if (flexible) {
+                    writer.write_unsigned_varint(1); // 0 + 1
+                } else {
+                    writer.write_int32(0);
+                }
+            }
+            
+            // config_type (v3+): 2 = STRING
+            if (header.api_version >= 3) {
+                writer.write_int8(2);
+            }
+            
+            // documentation (v3+) - nullable
+            if (header.api_version >= 3) {
+                if (flexible) {
+                    writer.write_unsigned_varint(0); // null
+                } else {
+                    writer.write_int16(-1);
+                }
+            }
+            
+            // tagged fields for config (flexible)
+            if (flexible) {
+                writer.write_unsigned_varint(0);
+            }
         }
         
         if (flexible) {
@@ -1842,6 +1928,144 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_create_partitions(
     }
     
     // Tagged fields for flexible versions
+    if (flexible) {
+        writer.write_unsigned_varint(0);
+    }
+    
+    return writer.data();
+}
+
+std::vector<uint8_t> KafkaProtocolHandler::handle_describe_log_dirs(
+    const RequestHeader& header, BufferReader& /*reader*/) {
+    
+    // DescribeLogDirs v2+ uses flexible format
+    bool flexible = (header.api_version >= 2);
+    
+    BufferWriter writer;
+    writer.write_int32(header.correlation_id);
+    
+    // Response header v1 for flexible versions - TAG_BUFFER
+    if (flexible) {
+        writer.write_unsigned_varint(0);  // empty tagged fields in header
+    }
+    
+    // Throttle time (v0+)
+    writer.write_int32(0);
+    
+    // Error code (v3+)
+    if (header.api_version >= 3) {
+        writer.write_int16(0);  // NONE
+    }
+    
+    // Get topics
+    std::vector<TopicInfo> topics;
+    if (topics_callback_) {
+        topics = topics_callback_();
+    } else {
+        std::lock_guard<std::mutex> lock(topics_mutex_);
+        topics = stored_topics_;
+    }
+    
+    // Calculate total size from partition details if available
+    int64_t total_bytes = 0;
+    for (const auto& topic : topics) {
+        if (!topic.partition_details.empty()) {
+            for (const auto& pd : topic.partition_details) {
+                total_bytes += pd.size_bytes;
+            }
+        } else {
+            total_bytes += topic.num_partitions * 1024;  // 1KB fallback per partition
+        }
+    }
+    
+    // Results array - one log directory
+    if (flexible) {
+        writer.write_unsigned_varint(2);  // 1 element + 1
+    } else {
+        writer.write_int32(1);
+    }
+    
+    // Log directory result
+    // error_code
+    writer.write_int16(0);  // NONE
+    
+    // log_dir (path)
+    std::string log_dir = "./data";
+    if (flexible) {
+        writer.write_compact_string(log_dir);
+    } else {
+        writer.write_string(log_dir);
+    }
+    
+    // Topics array
+    if (flexible) {
+        writer.write_unsigned_varint(static_cast<uint32_t>(topics.size()) + 1);
+    } else {
+        writer.write_int32(static_cast<int32_t>(topics.size()));
+    }
+    
+    for (const auto& topic : topics) {
+        // topic_name
+        if (flexible) {
+            writer.write_compact_string(topic.name);
+        } else {
+            writer.write_string(topic.name);
+        }
+        
+        // partitions array - use partition_details if available
+        int32_t partition_count = topic.partition_details.empty() 
+            ? topic.num_partitions 
+            : static_cast<int32_t>(topic.partition_details.size());
+            
+        if (flexible) {
+            writer.write_unsigned_varint(static_cast<uint32_t>(partition_count) + 1);
+        } else {
+            writer.write_int32(partition_count);
+        }
+        
+        for (int32_t p = 0; p < partition_count; ++p) {
+            // partition_index
+            writer.write_int32(p);
+            
+            // partition_size - use real size if available
+            int64_t partition_size = 1024;  // fallback
+            if (p < static_cast<int32_t>(topic.partition_details.size())) {
+                partition_size = topic.partition_details[p].size_bytes;
+            }
+            writer.write_int64(partition_size);
+            
+            // offset_lag
+            writer.write_int64(0);  // No lag for local storage
+            
+            // is_future_key
+            writer.write_bool(false);
+            
+            // Tagged fields for partition (flexible)
+            if (flexible) {
+                writer.write_unsigned_varint(0);
+            }
+        }
+        
+        // Tagged fields for topic (flexible)
+        if (flexible) {
+            writer.write_unsigned_varint(0);
+        }
+    }
+    
+    // total_bytes (v4+)
+    if (header.api_version >= 4) {
+        writer.write_int64(total_bytes);
+        
+        // usable_bytes (v4+)
+        writer.write_int64(total_bytes * 10);  // Assume 10x available space
+    }
+    
+    // Tagged fields for log_dir (flexible)
+    if (flexible) {
+        writer.write_unsigned_varint(0);
+    }
+    
+    // Tagged fields for response (flexible)
     if (flexible) {
         writer.write_unsigned_varint(0);
     }

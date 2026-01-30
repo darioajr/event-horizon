@@ -35,6 +35,8 @@ Apos a execucao, acesse http://localhost:8080 para visualizar no Kafka UI.
 $ErrorActionPreference = "Continue"
 $ComposeFile = "docker-compose-kafka-test.yml"
 $DataDir = ".\data"
+$ProjectName = (Get-Item .).Name.ToLower() -replace '[^a-z0-9]', ''
+$VolumeName = "${ProjectName}_kafka-data"
 
 Write-Host ""
 Write-Host "=========================================" -ForegroundColor Cyan
@@ -105,10 +107,10 @@ Write-Host ""
 Write-Host "Limpando ambiente anterior..." -ForegroundColor Yellow
 docker-compose -f $ComposeFile down -v 2>$null
 
-# Subir Zookeeper e Kafka
+# Subir Kafka (KRaft mode - sem Zookeeper)
 Write-Host ""
-Write-Host "Subindo Zookeeper + Kafka..." -ForegroundColor Yellow
-docker-compose -f $ComposeFile up -d zookeeper kafka
+Write-Host "Subindo Kafka (KRaft mode)..." -ForegroundColor Yellow
+docker-compose -f $ComposeFile up -d kafka
 
 # Aguardar Kafka ficar pronto
 Write-Host "Aguardando Kafka inicializar..." -ForegroundColor Yellow
@@ -152,6 +154,7 @@ Start-Sleep -Seconds 3
 # Copiar arquivos de log para cada partição
 Write-Host ""
 Write-Host "Copiando arquivos do eventhorizon..." -ForegroundColor Yellow
+Write-Host "  Volume: $VolumeName" -ForegroundColor Gray
 
 foreach ($topic in $topics.Keys | Sort-Object) {
     foreach ($p in $topics[$topic]) {
@@ -159,13 +162,13 @@ foreach ($topic in $topics.Keys | Sort-Object) {
         $dstDir = "/kafka-data/$($p.Dir)"
         
         # Copiar arquivo .log
-        docker run --rm -v "${PWD}/data:/eventhorizon-data:ro" -v "mapc_kafka-data:/kafka-data" alpine:latest cp $srcLog $dstDir/ 2>$null
+        docker run --rm -v "${PWD}/data:/eventhorizon-data:ro" -v "${VolumeName}:/kafka-data" alpine:latest cp $srcLog $dstDir/ 2>$null
         
-        # Remover índices antigos
-        docker run --rm -v "mapc_kafka-data:/kafka-data" alpine:latest rm -f "$dstDir/00000000000000000000.index" "$dstDir/00000000000000000000.timeindex" 2>$null
+        # Remover índices antigos para forçar reconstrução
+        docker run --rm -v "${VolumeName}:/kafka-data" alpine:latest rm -f "$dstDir/00000000000000000000.index" "$dstDir/00000000000000000000.timeindex" 2>$null
         
         # Ajustar permissões
-        docker run --rm -v "mapc_kafka-data:/kafka-data" alpine:latest chown 1000:1000 "$dstDir/00000000000000000000.log" 2>$null
+        docker run --rm -v "${VolumeName}:/kafka-data" alpine:latest chown 1000:1000 "$dstDir/00000000000000000000.log" 2>$null
         
         Write-Host "  Copiado: $($p.Dir) ($($p.LogSize) bytes)" -ForegroundColor Gray
     }

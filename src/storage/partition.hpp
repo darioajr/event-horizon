@@ -70,6 +70,16 @@ public:
     int32_t get_partition_id() const;
     
     /**
+     * @brief Retorna o tamanho total da partição em bytes
+     */
+    int64_t get_size_bytes() const;
+    
+    /**
+     * @brief Retorna o número de segments
+     */
+    int32_t get_segment_count() const;
+    
+    /**
      * @brief Força escrita de todos os segments em disco
      */
     void flush();

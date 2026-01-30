@@ -158,6 +158,16 @@ Broker::Broker(const std::string& config_path)
             info.num_partitions = static_cast<int32_t>(partitions.size());
             info.replication_factor = config_.replication_factor;
             info.is_internal = false;
+            
+            // Add partition details for DescribeLogDirs
+            for (const auto& partition : partitions) {
+                protocol::PartitionDetailInfo pd;
+                pd.partition_id = partition->get_partition_id();
+                pd.size_bytes = partition->get_size_bytes();
+                pd.segment_count = partition->get_segment_count();
+                info.partition_details.push_back(pd);
+            }
+            
             topics.push_back(info);
         }
         return topics;

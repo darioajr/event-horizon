@@ -187,6 +187,21 @@
       }
     },
     {
+      "name": "windows-ninja-static",
+      "displayName": "Windows Release (Ninja/Static)",
+      "inherits": "base",
+      "generator": "Ninja",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "VCPKG_TARGET_TRIPLET": "x64-windows-static"
+      }
+    },
+    {
       "name": "windows-static",
       "displayName": "Windows Release (Static)",
       "inherits": "base",

@@ -15,9 +15,6 @@ namespace fs = std::filesystem;
 // Kafka index entry: 4 bytes relative offset + 4 bytes position
 constexpr size_t KAFKA_INDEX_ENTRY_SIZE = 8;
 
-// RecordBatch header size (before records)
-constexpr size_t RECORD_BATCH_HEADER_SIZE = 61;
-
 // CRC32C (Castagnoli) lookup table
 static const uint32_t crc32c_table[256] = {
     0x00000000, 0xF26B8303, 0xE13B70F7, 0x1350F3F4, 0xC79A971F, 0x35F1141C, 0x26A1E7E8, 0xD4CA64EB,
@@ -483,7 +480,7 @@ std::vector<Record> LogSegment::read(int64_t start_offset, size_t max_records) {
         
         if (!index_file_.good() || index_file_.gcount() < 8) break;
         
-        int32_t rel_off = read_int32_be(index_entry);
+        [[maybe_unused]] int32_t rel_off = read_int32_be(index_entry);
         int32_t position = read_int32_be(index_entry + 4);
         
         // Read batch from data file
@@ -513,7 +510,7 @@ std::vector<Record> LogSegment::read(int64_t start_offset, size_t max_records) {
             int32_t record_len = read_varint(records_data.data(), pos, records_data.size());
             if (record_len <= 0) break;
             
-            size_t record_end = pos + record_len;
+            [[maybe_unused]] size_t record_end = pos + record_len;
             
             // attributes
             pos++;
@@ -661,6 +658,23 @@ void LogSegment::flush() {
 
 int64_t LogSegment::size() const {
     return next_offset_ - base_offset_;
+}
+
+int64_t LogSegment::get_size_bytes() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    
+    // Get current file position to restore later
+    auto& file = const_cast<std::fstream&>(data_file_);
+    auto current_pos = file.tellg();
+    
+    // Seek to end to get file size
+    file.seekg(0, std::ios::end);
+    int64_t size = file.tellg();
+    
+    // Restore position
+    file.seekg(current_pos);
+    
+    return size > 0 ? size : 0;
 }
 
 int64_t LogSegment::get_base_offset() const {

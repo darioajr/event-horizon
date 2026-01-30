@@ -18,7 +18,7 @@ namespace network { class Server; }
  * @brief Configuração do broker
  */
 struct BrokerConfig {
-    int32_t broker_id = 0;
+    int32_t broker_id = 1;
     std::string host = "localhost";
     uint16_t port = 9092;
     std::string log_dir = "./data";

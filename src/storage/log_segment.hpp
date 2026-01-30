@@ -70,6 +70,11 @@ public:
     int64_t size() const;
     
     /**
+     * @brief Retorna o tamanho do segmento em bytes
+     */
+    int64_t get_size_bytes() const;
+    
+    /**
      * @brief Retorna o offset base do segmento
      */
     int64_t get_base_offset() const;
