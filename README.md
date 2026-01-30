@@ -1,6 +1,6 @@
 # Event Horizon - Kafka-Compatible Event Streaming Platform
 
-Um serviço de armazenamento de eventos compatível com o protocolo Apache Kafka, inspirado no MapR Event Horizon, implementado em C++20.
+Um serviço de armazenamento de eventos compatível com o protocolo Apache Kafka, inspirado no MapR Event Horizon, implementado em C++23.
 
 ## Características
 
@@ -15,7 +15,7 @@ Um serviço de armazenamento de eventos compatível com o protocolo Apache Kafka
 ## Requisitos
 
 - CMake 3.16+
-- C++20 compiler (GCC 10+, Clang 12+, MSVC 2019+)
+- C++23 compiler (GCC 13+, Clang 17+, MSVC 2022+)
 - vcpkg (gerenciador de pacotes)
 - Ninja (opcional, recomendado para Linux)
 
