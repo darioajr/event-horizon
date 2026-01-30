@@ -4,7 +4,7 @@
   "description": "Kafka-compatible Event Horizon in C++",
   "homepage": "https://github.com/yourusername/event-horizon",
   "license": "MIT",
-  "supports": "windows | linux",
+  "supports": "(windows & x64) | ((linux | osx) & (x64 | arm64))",
   "dependencies": [
     "boost-asio",
     "boost-system",

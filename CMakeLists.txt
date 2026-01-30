@@ -1,6 +1,20 @@
 cmake_minimum_required(VERSION 3.16)
 project(event_horizon VERSION 1.0.0 LANGUAGES CXX)
 
+# ============================================================================
+# Verificar arquitetura suportada (x64 ou ARM64)
+# ============================================================================
+if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+    message(FATAL_ERROR "Event Horizon only supports 64-bit architectures (x86-64 or ARM64).")
+endif()
+
+# Verificar plataforma e arquitetura
+if(WIN32)
+    if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "AMD64|x86_64")
+        message(FATAL_ERROR "Windows builds only support x86-64 architecture.")
+    endif()
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
