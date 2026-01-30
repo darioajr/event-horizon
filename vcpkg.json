@@ -1,0 +1,23 @@
+{
+  "name": "event-horizon",
+  "version": "1.0.0",
+  "description": "Kafka-compatible Event Horizon in C++",
+  "homepage": "https://github.com/yourusername/event-horizon",
+  "license": "MIT",
+  "supports": "windows | linux",
+  "dependencies": [
+    "boost-asio",
+    "boost-system",
+    "nlohmann-json"
+  ],
+  "overrides": [],
+  "builtin-baseline": "75a2e14262fc23c1f03bac18e135c4866dd25b51",
+  "features": {
+    "tests": {
+      "description": "Build tests",
+      "dependencies": [
+        "gtest"
+      ]
+    }
+  }
+}

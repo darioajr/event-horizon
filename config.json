@@ -1,0 +1,10 @@
+{
+    "broker_id": 0,
+    "cluster_id": "event-horizon-cluster",
+    "host": "host.docker.internal",
+    "log_dir": "./data",
+    "num_partitions": 3,
+    "port": 9092,
+    "replication_factor": 1,
+    "thread_pool_size": 4
+}

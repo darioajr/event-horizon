@@ -1,0 +1,1716 @@
+#include "broker.hpp"
+#include "../network/server.hpp"
+#include "../protocol/kafka_protocol.hpp"
+#include <filesystem>
+#include <iostream>
+#include <fstream>
+#include <set>
+#include <algorithm>
+#include <nlohmann/json.hpp>
+
+namespace fs = std::filesystem;
+
+namespace eventhorizon {
+
+// CRC32C (Castagnoli) lookup table
+static const uint32_t crc32c_table[256] = {
+    0x00000000, 0xF26B8303, 0xE13B70F7, 0x1350F3F4, 0xC79A971F, 0x35F1141C, 0x26A1E7E8, 0xD4CA64EB,
+    0x8AD958CF, 0x78B2DBCC, 0x6BE22838, 0x9989AB3B, 0x4D43CFD0, 0xBF284CD3, 0xAC78BF27, 0x5E133C24,
+    0x105EC76F, 0xE235446C, 0xF165B798, 0x030E349B, 0xD7C45070, 0x25AFD373, 0x36FF2087, 0xC494A384,
+    0x9A879FA0, 0x68EC1CA3, 0x7BBCEF57, 0x89D76C54, 0x5D1D08BF, 0xAF768BBC, 0xBC267848, 0x4E4DFB4B,
+    0x20BD8EDE, 0xD2D60DDD, 0xC186FE29, 0x33ED7D2A, 0xE72719C1, 0x154C9AC2, 0x061C6936, 0xF477EA35,
+    0xAA64D611, 0x580F5512, 0x4B5FA6E6, 0xB93425E5, 0x6DFE410E, 0x9F95C20D, 0x8CC531F9, 0x7EAEB2FA,
+    0x30E349B1, 0xC288CAB2, 0xD1D83946, 0x23B3BA45, 0xF779DEAE, 0x05125DAD, 0x1642AE59, 0xE4292D5A,
+    0xBA3A117E, 0x4851927D, 0x5B016189, 0xA96AE28A, 0x7DA08661, 0x8FCB0562, 0x9C9BF696, 0x6EF07595,
+    0x417B1DBC, 0xB3109EBF, 0xA0406D4B, 0x522BEE48, 0x86E18AA3, 0x749809A0, 0x67C8FA54, 0x95A37957,
+    0xCBB04573, 0x39DBC670, 0x2A8B3584, 0xD8E0B687, 0x0C2AD26C, 0xFE41516F, 0xED11A29B, 0x1F7A2198,
+    0x5137DAD3, 0xA35C59D0, 0xB00CAA24, 0x42672927, 0x96AD4DCC, 0x64C6CECF, 0x77963D3B, 0x85FDBE38,
+    0xDBEE821C, 0x2985011F, 0x3AD5F2EB, 0xC8BE71E8, 0x1C74150D, 0xEE1F960E, 0xFD4F65FA, 0x0F24E6F9,
+    0x615E936E, 0x9335106D, 0x8065E399, 0x720E609A, 0xA6C40471, 0x54AF8772, 0x47FF7486, 0xB594F785,
+    0xEBD7CBA1, 0x19BC48A2, 0x0AECBB56, 0xF8873855, 0x2C4D5CBE, 0xDE26DFBD, 0xCD762C49, 0x3F1DAF4A,
+    0x71504A01, 0x833BC902, 0x906B3AF6, 0x6200B9F5, 0xB6CADD1E, 0x44A15E1D, 0x57F1ADE9, 0xA59A2EEA,
+    0xFB8912CE, 0x09E291CD, 0x1AB26239, 0xE8D9E13A, 0x3C1385D1, 0xCE7806D2, 0xDD28F526, 0x2F437625,
+    0x82F63B78, 0x709DB87B, 0x63CD4B8F, 0x91A6C88C, 0x456CAC67, 0xB7072F64, 0xA457DC90, 0x563C5F93,
+    0x082F63B7, 0xFA44E0B4, 0xE9141340, 0x1B7F9043, 0xCFB5F4A8, 0x3DDE77AB, 0x2E8E845F, 0xDCE5075C,
+    0x92A8FC17, 0x60C37F14, 0x73938CE0, 0x81F80FE3, 0x55326B08, 0xA759E80B, 0xB4091BFF, 0x466298FC,
+    0x1871A4D8, 0xEA1A27DB, 0xF94AD42F, 0x0B21572C, 0xDFEB33C7, 0x2D80B0C4, 0x3ED04330, 0xCCBBC033,
+    0xA24BB5A6, 0x502036A5, 0x4370C551, 0xB11B4652, 0x65D122B9, 0x97BAA1BA, 0x84EA524E, 0x7681D14D,
+    0x2892ED69, 0xDAF96E6A, 0xC9A99D9E, 0x3BC21E9D, 0xEF087A76, 0x1D63F975, 0x0E330A81, 0xFC588982,
+    0xB21572C9, 0x407EF1CA, 0x532E023E, 0xA145813D, 0x758FE5D6, 0x87E466D5, 0x94B49521, 0x66DF1622,
+    0x38CC2A06, 0xCAA7A905, 0xD9F75AF1, 0x2B9CD9F2, 0xFF56BD19, 0x0D3D3E1A, 0x1E6DCDEE, 0xEC064EED,
+    0xC38D26C4, 0x31E6A5C7, 0x22B65633, 0xD0DDD530, 0x0417B1DB, 0xF67C32D8, 0xE52CC12C, 0x1747422F,
+    0x49547E0B, 0xBB3FFD08, 0xA86F0EFC, 0x5A048DFF, 0x8ECEE914, 0x7CA56A17, 0x6FF599E3, 0x9D9E1AE0,
+    0xD3D3E1AB, 0x21B862A8, 0x32E8915C, 0xC083125F, 0x144976B4, 0xE622F5B7, 0xF5720643, 0x07198540,
+    0x590AB964, 0xAB613A67, 0xB831C993, 0x4A5A4A90, 0x9E902E7B, 0x6CFBAD78, 0x7FAB5E8C, 0x8DC0DD8F,
+    0xE330A81A, 0x115B2B19, 0x020BD8ED, 0xF0605BEE, 0x24AA3F05, 0xD6C1BC06, 0xC5914FF2, 0x37FACCF1,
+    0x69E9F0D5, 0x9B8273D6, 0x88D28022, 0x7AB90321, 0xAE7367CA, 0x5C18E4C9, 0x4F48173D, 0xBD23943E,
+    0xF36E6F75, 0x0105EC76, 0x12551F82, 0xE03E9C81, 0x34F4F86A, 0xC69F7B69, 0xD5CF889D, 0x27A40B9E,
+    0x79B737BA, 0x8BDCB4B9, 0x988C474D, 0x6AE7C44E, 0xBE2DA0A5, 0x4C4623A6, 0x5F16D052, 0xAD7D5351
+};
+
+static uint32_t compute_crc32c(const uint8_t* data, size_t length) {
+    uint32_t crc = 0xFFFFFFFF;
+    for (size_t i = 0; i < length; i++) {
+        crc = crc32c_table[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);
+    }
+    return crc ^ 0xFFFFFFFF;
+}
+
+// ============================================================================
+// BrokerConfig Implementation
+// ============================================================================
+
+BrokerConfig BrokerConfig::load(const std::string& config_path) {
+    BrokerConfig config;
+    
+    if (!fs::exists(config_path)) {
+        std::cout << "Config file not found, using defaults: " << config_path << "\n";
+        return config;
+    }
+    
+    try {
+        std::ifstream file(config_path);
+        nlohmann::json json;
+        file >> json;
+        
+        if (json.contains("broker_id")) {
+            config.broker_id = json["broker_id"].get<int32_t>();
+        }
+        if (json.contains("host")) {
+            config.host = json["host"].get<std::string>();
+        }
+        if (json.contains("port")) {
+            config.port = json["port"].get<uint16_t>();
+        }
+        if (json.contains("log_dir")) {
+            config.log_dir = json["log_dir"].get<std::string>();
+        }
+        if (json.contains("num_partitions")) {
+            config.num_partitions = json["num_partitions"].get<int32_t>();
+        }
+        if (json.contains("replication_factor")) {
+            config.replication_factor = json["replication_factor"].get<int16_t>();
+        }
+        if (json.contains("thread_pool_size")) {
+            config.thread_pool_size = json["thread_pool_size"].get<size_t>();
+        }
+        if (json.contains("cluster_id")) {
+            config.cluster_id = json["cluster_id"].get<std::string>();
+        }
+        
+        std::cout << "Loaded config from: " << config_path << "\n";
+    } catch (const std::exception& e) {
+        std::cerr << "Error loading config: " << e.what() << "\n";
+    }
+    
+    return config;
+}
+
+void BrokerConfig::save(const std::string& config_path) const {
+    nlohmann::json json;
+    json["broker_id"] = broker_id;
+    json["host"] = host;
+    json["port"] = port;
+    json["log_dir"] = log_dir;
+    json["num_partitions"] = num_partitions;
+    json["replication_factor"] = replication_factor;
+    json["thread_pool_size"] = thread_pool_size;
+    json["cluster_id"] = cluster_id;
+    
+    std::ofstream file(config_path);
+    file << json.dump(4);
+}
+
+// ============================================================================
+// Broker Implementation
+// ============================================================================
+
+Broker::Broker(const std::string& config_path)
+    : config_(BrokerConfig::load(config_path))
+    , running_(false) {
+    
+    // Criar diretório de logs se não existir
+    if (!fs::exists(config_.log_dir)) {
+        fs::create_directories(config_.log_dir);
+        std::cout << "Created log directory: " << config_.log_dir << "\n";
+    }
+    
+    // Inicializar protocol handler
+    protocol_handler_ = std::make_unique<protocol::KafkaProtocolHandler>();
+    protocol_handler_->set_broker_info(config_.broker_id, config_.host, config_.port);
+    protocol_handler_->set_cluster_id(config_.cluster_id);
+    
+    // Configurar versão do broker
+    protocol::BrokerVersion version;
+    version.name = "eventhorizon";
+    version.version = "1.0.0";
+    version.commit_id = "dev";
+    protocol_handler_->set_broker_version(version);
+    
+    // Configurar callback para obter tópicos
+    protocol_handler_->set_topics_callback([this]() {
+        std::vector<protocol::TopicInfo> topics;
+        std::shared_lock<std::shared_mutex> lock(topics_mutex_);
+        
+        for (const auto& [name, partitions] : topics_) {
+            protocol::TopicInfo info;
+            info.name = name;
+            info.num_partitions = static_cast<int32_t>(partitions.size());
+            info.replication_factor = config_.replication_factor;
+            info.is_internal = false;
+            topics.push_back(info);
+        }
+        return topics;
+    });
+    
+    // Configurar callback para obter consumer groups
+    protocol_handler_->set_groups_callback([this]() {
+        std::vector<protocol::ConsumerGroupInfo> groups;
+        std::shared_lock<std::shared_mutex> lock(groups_mutex_);
+        
+        for (const auto& [group_id, group] : consumer_groups_) {
+            groups.push_back(group);
+        }
+        return groups;
+    });
+    
+    // Registrar handlers customizados para Produce e Fetch
+    register_protocol_handlers();
+    
+    // Carregar tópicos existentes
+    load_topics();
+    
+    std::cout << "Broker " << config_.broker_id << " initialized\n";
+}
+
+Broker::~Broker() {
+    stop();
+}
+
+void Broker::register_protocol_handlers() {
+    using namespace protocol;
+    
+    // Handler para Produce
+    protocol_handler_->register_handler(ApiKey::Produce, 
+        [this](const RequestHeader& header, BufferReader& reader, BufferWriter& writer) {
+            return handle_produce_request(header, reader);
+        });
+    
+    // Handler para Fetch
+    protocol_handler_->register_handler(ApiKey::Fetch,
+        [this](const RequestHeader& header, BufferReader& reader, BufferWriter& writer) {
+            return handle_fetch_request(header, reader);
+        });
+    
+    // Handler para ListOffsets
+    protocol_handler_->register_handler(ApiKey::ListOffsets,
+        [this](const RequestHeader& header, BufferReader& reader, BufferWriter& writer) {
+            return handle_list_offsets_request(header, reader);
+        });
+    
+    // Handler para Metadata (com tópicos reais)
+    protocol_handler_->register_handler(ApiKey::Metadata,
+        [this](const RequestHeader& header, BufferReader& reader, BufferWriter& writer) {
+            return handle_metadata_request(header, reader);
+        });
+}
+
+void Broker::load_topics() {
+    // Procurar diretórios de partição existentes
+    for (const auto& entry : fs::directory_iterator(config_.log_dir)) {
+        if (entry.is_directory()) {
+            std::string dir_name = entry.path().filename().string();
+            
+            // Formato: topic-partition
+            auto pos = dir_name.rfind('-');
+            if (pos != std::string::npos) {
+                std::string topic = dir_name.substr(0, pos);
+                try {
+                    int32_t partition_id = std::stoi(dir_name.substr(pos + 1));
+                    
+                    // Criar partição
+                    auto partition = std::make_unique<Partition>(
+                        topic, partition_id, config_.log_dir);
+                    
+                    topics_[topic].push_back(std::move(partition));
+                    
+                    std::cout << "Loaded topic: " << topic 
+                              << " partition: " << partition_id << "\n";
+                } catch (...) {
+                    // Ignorar diretórios inválidos
+                }
+            }
+        }
+    }
+    
+    // Ordenar partições por ID
+    for (auto& [topic, partitions] : topics_) {
+        std::sort(partitions.begin(), partitions.end(),
+            [](const auto& a, const auto& b) {
+                return a->get_partition_id() < b->get_partition_id();
+            });
+    }
+}
+
+void Broker::start() {
+    if (running_.exchange(true)) {
+        return; // Já está rodando
+    }
+    
+    std::cout << "Starting broker on " << config_.host << ":" << config_.port << "\n";
+    
+    // Criar servidor de rede
+    server_ = std::make_unique<network::Server>(config_.port, config_.thread_pool_size);
+    
+    // Definir handler de mensagens
+    server_->set_message_handler([this](const std::vector<uint8_t>& request) {
+        return protocol_handler_->handle_request(request);
+    });
+    
+    // Iniciar servidor
+    server_->start();
+    
+    std::cout << "Broker " << config_.broker_id << " started successfully\n";
+}
+
+void Broker::stop() {
+    if (!running_.exchange(false)) {
+        return;
+    }
+    
+    std::cout << "Stopping broker...\n";
+    
+    // Parar servidor
+    if (server_) {
+        server_->stop();
+    }
+    
+    // Flush de todos os tópicos
+    {
+        std::shared_lock<std::shared_mutex> lock(topics_mutex_);
+        for (auto& [topic, partitions] : topics_) {
+            for (auto& partition : partitions) {
+                partition->flush();
+            }
+        }
+    }
+    
+    std::cout << "Broker stopped\n";
+}
+
+void Broker::create_topic(const std::string& name, int32_t num_partitions, 
+                          int16_t replication_factor) {
+    std::unique_lock<std::shared_mutex> lock(topics_mutex_);
+    
+    if (topics_.find(name) != topics_.end()) {
+        throw std::runtime_error("Topic already exists: " + name);
+    }
+    
+    std::vector<std::unique_ptr<Partition>> partitions;
+    partitions.reserve(num_partitions);
+    
+    for (int32_t i = 0; i < num_partitions; ++i) {
+        partitions.push_back(
+            std::make_unique<Partition>(name, i, config_.log_dir));
+    }
+    
+    topics_[name] = std::move(partitions);
+    
+    std::cout << "Created topic: " << name 
+              << " with " << num_partitions << " partitions\n";
+}
+
+void Broker::delete_topic(const std::string& name) {
+    std::unique_lock<std::shared_mutex> lock(topics_mutex_);
+    
+    auto it = topics_.find(name);
+    if (it == topics_.end()) {
+        throw std::runtime_error("Topic not found: " + name);
+    }
+    
+    // Remover do mapa (destrutor vai limpar recursos)
+    topics_.erase(it);
+    
+    // Remover diretórios (opcional - deixar como cleanup)
+    // for (const auto& entry : fs::directory_iterator(config_.log_dir)) {
+    //     if (entry.path().filename().string().find(name + "-") == 0) {
+    //         fs::remove_all(entry.path());
+    //     }
+    // }
+    
+    std::cout << "Deleted topic: " << name << "\n";
+}
+
+std::vector<std::string> Broker::list_topics() const {
+    std::shared_lock<std::shared_mutex> lock(topics_mutex_);
+    
+    std::vector<std::string> result;
+    result.reserve(topics_.size());
+    
+    for (const auto& [topic, _] : topics_) {
+        result.push_back(topic);
+    }
+    
+    return result;
+}
+
+Partition* Broker::get_partition(const std::string& topic, int32_t partition_id) {
+    // First try with shared lock
+    {
+        std::shared_lock<std::shared_mutex> lock(topics_mutex_);
+        auto it = topics_.find(topic);
+        if (it != topics_.end()) {
+            if (partition_id >= 0 && partition_id < static_cast<int32_t>(it->second.size())) {
+                return it->second[partition_id].get();
+            }
+            return nullptr;
+        }
+    }
+    
+    // Topic not found in topics_, check if it exists in protocol_handler's stored topics
+    if (protocol_handler_) {
+        auto stored = protocol_handler_->get_stored_topics();
+        for (const auto& st : stored) {
+            if (st.name == topic) {
+                // Create the topic now (upgrade to unique lock)
+                std::unique_lock<std::shared_mutex> lock(topics_mutex_);
+                
+                // Double-check after getting exclusive lock
+                auto it = topics_.find(topic);
+                if (it != topics_.end()) {
+                    if (partition_id >= 0 && partition_id < static_cast<int32_t>(it->second.size())) {
+                        return it->second[partition_id].get();
+                    }
+                    return nullptr;
+                }
+                
+                // Create the partitions now
+                std::vector<std::unique_ptr<Partition>> partitions;
+                int32_t num_parts = st.num_partitions > 0 ? st.num_partitions : 1;
+                partitions.reserve(num_parts);
+                
+                for (int32_t i = 0; i < num_parts; ++i) {
+                    partitions.push_back(
+                        std::make_unique<Partition>(topic, i, config_.log_dir));
+                }
+                
+                std::cout << "Lazily created topic: " << topic 
+                          << " with " << num_parts << " partitions\n";
+                
+                topics_[topic] = std::move(partitions);
+                
+                // Now return the partition
+                if (partition_id >= 0 && partition_id < num_parts) {
+                    return topics_[topic][partition_id].get();
+                }
+                return nullptr;
+            }
+        }
+    }
+    
+    return nullptr;
+}
+
+std::string Broker::get_topic_name_by_id(const std::vector<uint8_t>& topic_id) const {
+    // Search through our topic_id mapping
+    for (const auto& [name, id] : topic_name_to_id_) {
+        if (id == topic_id) {
+            return name;
+        }
+    }
+    return ""; // Not found
+}
+
+std::vector<uint8_t> Broker::get_or_create_topic_id(const std::string& topic_name) {
+    auto it = topic_name_to_id_.find(topic_name);
+    if (it != topic_name_to_id_.end()) {
+        return it->second;
+    }
+    
+    // Generate a deterministic UUID based on topic name
+    // Using a simple hash-based approach for consistency
+    std::vector<uint8_t> uuid(16, 0);
+    std::hash<std::string> hasher;
+    size_t hash1 = hasher(topic_name);
+    size_t hash2 = hasher(topic_name + "_uuid");
+    
+    // Fill UUID with hash bytes
+    for (int i = 0; i < 8 && i < 16; ++i) {
+        uuid[i] = static_cast<uint8_t>((hash1 >> (i * 8)) & 0xFF);
+    }
+    for (int i = 0; i < 8 && (i + 8) < 16; ++i) {
+        uuid[i + 8] = static_cast<uint8_t>((hash2 >> (i * 8)) & 0xFF);
+    }
+    
+    // Set version (4) and variant bits for valid UUID format
+    uuid[6] = (uuid[6] & 0x0F) | 0x40; // Version 4
+    uuid[8] = (uuid[8] & 0x3F) | 0x80; // Variant
+    
+    topic_name_to_id_[topic_name] = uuid;
+    return uuid;
+}
+
+// Helper to decode zigzag-encoded varint
+static int32_t decode_varint(const uint8_t* data, size_t& offset, size_t max_size) {
+    int32_t result = 0;
+    int shift = 0;
+    while (offset < max_size) {
+        uint8_t byte = data[offset++];
+        result |= (static_cast<int32_t>(byte & 0x7F) << shift);
+        if ((byte & 0x80) == 0) break;
+        shift += 7;
+    }
+    // Decode zigzag
+    return (result >> 1) ^ -(result & 1);
+}
+
+// Helper to decode zigzag-encoded varlong
+static int64_t decode_varlong(const uint8_t* data, size_t& offset, size_t max_size) {
+    int64_t result = 0;
+    int shift = 0;
+    while (offset < max_size) {
+        uint8_t byte = data[offset++];
+        result |= (static_cast<int64_t>(byte & 0x7F) << shift);
+        if ((byte & 0x80) == 0) break;
+        shift += 7;
+    }
+    // Decode zigzag
+    return (result >> 1) ^ -(result & 1);
+}
+
+// Structure to hold parsed record from incoming RecordBatch
+struct ParsedRecord {
+    std::string key;
+    std::vector<uint8_t> value;
+    int64_t timestamp;
+};
+
+// Parse a Kafka RecordBatch and extract individual records
+static std::vector<ParsedRecord> parse_record_batch(const std::vector<uint8_t>& data) {
+    std::vector<ParsedRecord> records;
+    
+    if (data.size() < 61) {
+        std::cerr << "[parse_record_batch] Data too small: " << data.size() << " bytes\n";
+        return records;
+    }
+    
+    size_t pos = 0;
+    
+    // RecordBatch header
+    // baseOffset (8 bytes) - big-endian
+    int64_t base_offset = 0;
+    for (int i = 0; i < 8; i++) {
+        base_offset = (base_offset << 8) | data[pos++];
+    }
+    
+    // batchLength (4 bytes) - big-endian
+    int32_t batch_length = 0;
+    for (int i = 0; i < 4; i++) {
+        batch_length = (batch_length << 8) | data[pos++];
+    }
+    
+    // partitionLeaderEpoch (4 bytes)
+    pos += 4;
+    
+    // magic (1 byte)
+    uint8_t magic = data[pos++];
+    if (magic != 2) {
+        std::cerr << "[parse_record_batch] Unsupported magic: " << (int)magic << "\n";
+        return records;
+    }
+    
+    // CRC (4 bytes)
+    pos += 4;
+    
+    // attributes (2 bytes)
+    pos += 2;
+    
+    // lastOffsetDelta (4 bytes)
+    pos += 4;
+    
+    // firstTimestamp (8 bytes) - big-endian
+    int64_t first_timestamp = 0;
+    for (int i = 0; i < 8; i++) {
+        first_timestamp = (first_timestamp << 8) | data[pos++];
+    }
+    
+    // maxTimestamp (8 bytes)
+    pos += 8;
+    
+    // producerId (8 bytes)
+    pos += 8;
+    
+    // producerEpoch (2 bytes)
+    pos += 2;
+    
+    // baseSequence (4 bytes)
+    pos += 4;
+    
+    // recordCount (4 bytes) - big-endian
+    int32_t record_count = 0;
+    for (int i = 0; i < 4; i++) {
+        record_count = (record_count << 8) | data[pos++];
+    }
+    
+    std::cout << "[parse_record_batch] base_offset=" << base_offset 
+              << " batch_length=" << batch_length
+              << " first_timestamp=" << first_timestamp
+              << " record_count=" << record_count 
+              << " pos=" << pos << "\n";
+    
+    // Now parse individual records
+    for (int32_t i = 0; i < record_count && pos < data.size(); i++) {
+        // Record length (varint)
+        int32_t record_len = decode_varint(data.data(), pos, data.size());
+        if (record_len <= 0) {
+            std::cerr << "[parse_record_batch] Invalid record length: " << record_len << "\n";
+            break;
+        }
+        
+        size_t record_start = pos;
+        
+        // attributes (1 byte)
+        pos++;
+        
+        // timestampDelta (varlong)
+        int64_t ts_delta = decode_varlong(data.data(), pos, data.size());
+        
+        // offsetDelta (varint)
+        int32_t offset_delta = decode_varint(data.data(), pos, data.size());
+        
+        // keyLength (varint, -1 means null)
+        int32_t key_len = decode_varint(data.data(), pos, data.size());
+        
+        // key bytes
+        std::string key;
+        if (key_len > 0) {
+            key.assign(reinterpret_cast<const char*>(data.data() + pos), key_len);
+            pos += key_len;
+        }
+        
+        // valueLength (varint, -1 means null)
+        int32_t value_len = decode_varint(data.data(), pos, data.size());
+        
+        // value bytes
+        std::vector<uint8_t> value;
+        if (value_len > 0) {
+            value.assign(data.begin() + pos, data.begin() + pos + value_len);
+            pos += value_len;
+        }
+        
+        // headersCount (varint)
+        int32_t headers_count = decode_varint(data.data(), pos, data.size());
+        
+        // Skip headers
+        for (int32_t h = 0; h < headers_count; h++) {
+            int32_t header_key_len = decode_varint(data.data(), pos, data.size());
+            if (header_key_len > 0) pos += header_key_len;
+            int32_t header_val_len = decode_varint(data.data(), pos, data.size());
+            if (header_val_len > 0) pos += header_val_len;
+        }
+        
+        ParsedRecord rec;
+        rec.key = key;
+        rec.value = value;
+        rec.timestamp = first_timestamp + ts_delta;
+        
+        std::cout << "[parse_record_batch] Record " << i << ": key=" << key 
+                  << " value_len=" << value_len 
+                  << " timestamp=" << rec.timestamp << "\n";
+        
+        records.push_back(std::move(rec));
+    }
+    
+    return records;
+}
+
+int64_t Broker::produce(const std::string& topic, int32_t partition_id,
+                        const std::string& key, const std::vector<uint8_t>& value,
+                        int64_t timestamp) {
+    // Auto-criar tópico se não existir
+    {
+        std::shared_lock<std::shared_mutex> lock(topics_mutex_);
+        if (topics_.find(topic) == topics_.end()) {
+            lock.unlock();
+            create_topic(topic, config_.num_partitions, config_.replication_factor);
+        }
+    }
+    
+    Partition* partition = get_partition(topic, partition_id);
+    if (!partition) {
+        throw std::runtime_error("Partition not found");
+    }
+    
+    return partition->produce(key, value, timestamp);
+}
+
+int64_t Broker::produce_raw_batch(const std::string& topic, int32_t partition_id,
+                                   const std::vector<uint8_t>& batch_data, int32_t record_count) {
+    // Auto-criar tópico se não existir
+    {
+        std::shared_lock<std::shared_mutex> lock(topics_mutex_);
+        if (topics_.find(topic) == topics_.end()) {
+            lock.unlock();
+            create_topic(topic, config_.num_partitions, config_.replication_factor);
+        }
+    }
+    
+    Partition* partition = get_partition(topic, partition_id);
+    if (!partition) {
+        throw std::runtime_error("Partition not found");
+    }
+    
+    return partition->produce_raw_batch(batch_data, record_count);
+}
+
+std::vector<Record> Broker::fetch(const std::string& topic, int32_t partition_id,
+                                  int64_t offset, size_t max_bytes) {
+    Partition* partition = get_partition(topic, partition_id);
+    if (!partition) {
+        return {};
+    }
+    
+    return partition->fetch(offset, max_bytes);
+}
+
+std::pair<std::vector<uint8_t>, int32_t> Broker::fetch_raw(const std::string& topic, 
+                                                            int32_t partition_id,
+                                                            int64_t offset, size_t max_bytes) {
+    Partition* partition = get_partition(topic, partition_id);
+    if (!partition) {
+        return {{}, 0};
+    }
+    
+    return partition->fetch_raw(offset, max_bytes);
+}
+
+// ============================================================================
+// Protocol Request Handlers
+// ============================================================================
+
+std::vector<uint8_t> Broker::handle_produce_request(
+    const protocol::RequestHeader& header, protocol::BufferReader& reader) {
+    
+    using namespace protocol;
+    
+    // Produce v9+ uses flexible format
+    bool is_flexible = (header.api_version >= 9);
+    
+    // Parse produce request
+    std::string transactional_id;
+    if (header.api_version >= 3) {
+        if (is_flexible) {
+            transactional_id = reader.read_compact_nullable_string();
+        } else {
+            transactional_id = reader.read_nullable_string();
+        }
+    }
+    int16_t acks = reader.read_int16();
+    int32_t timeout = reader.read_int32();
+    
+    BufferWriter writer;
+    writer.write_int32(header.correlation_id);
+    
+    // Response header v1 for flexible versions - TAG_BUFFER
+    if (is_flexible) {
+        writer.write_unsigned_varint(0);  // empty tagged fields in header
+    }
+    
+    // Parse topics - COMPACT_ARRAY for flexible versions
+    int32_t topic_count;
+    if (is_flexible) {
+        uint32_t n = reader.read_unsigned_varint();
+        topic_count = (n > 0) ? static_cast<int32_t>(n - 1) : 0;
+    } else {
+        topic_count = reader.read_int32();
+    }
+    
+    // Write topics response
+    if (is_flexible) {
+        writer.write_unsigned_varint(static_cast<uint32_t>(topic_count + 1));
+    } else {
+        writer.write_int32(topic_count);
+    }
+    
+    for (int32_t t = 0; t < topic_count; ++t) {
+        std::string topic_name;
+        if (is_flexible) {
+            topic_name = reader.read_compact_string();
+        } else {
+            topic_name = reader.read_string();
+        }
+        
+        // Write topic name in response
+        if (is_flexible) {
+            writer.write_compact_string(topic_name);
+        } else {
+            writer.write_string(topic_name);
+        }
+        
+        // Partitions - COMPACT_ARRAY for flexible versions
+        int32_t partition_count;
+        if (is_flexible) {
+            uint32_t n = reader.read_unsigned_varint();
+            partition_count = (n > 0) ? static_cast<int32_t>(n - 1) : 0;
+        } else {
+            partition_count = reader.read_int32();
+        }
+        
+        if (is_flexible) {
+            writer.write_unsigned_varint(static_cast<uint32_t>(partition_count + 1));
+        } else {
+            writer.write_int32(partition_count);
+        }
+        
+        for (int32_t p = 0; p < partition_count; ++p) {
+            int32_t partition_id = reader.read_int32();
+            
+            // Record set - COMPACT_BYTES for flexible versions
+            std::vector<uint8_t> record_set;
+            if (is_flexible) {
+                record_set = reader.read_compact_nullable_bytes();
+            } else {
+                record_set = reader.read_nullable_bytes();
+            }
+            
+            // Read partition tagged fields for flexible versions
+            if (is_flexible) {
+                reader.read_unsigned_varint(); // skip tagged fields
+            }
+            
+            writer.write_int32(partition_id);
+            
+            try {
+                // Store the RecordBatch directly (preserves original CRC)
+                // We only need to parse it to get record_count for logging
+                int64_t base_offset = 0;
+                int32_t record_count = 0;
+                if (!record_set.empty() && record_set.size() >= 61) {
+                    // Extract record_count from batch header (offset 57-60, big-endian)
+                    // RecordBatch format: baseOffset(8) + batchLength(4) + partitionLeaderEpoch(4) 
+                    // + magic(1) + crc(4) + attributes(2) + lastOffsetDelta(4) 
+                    // + firstTimestamp(8) + maxTimestamp(8) + producerId(8) + producerEpoch(2)
+                    // + baseSequence(4) + recordCount(4)
+                    size_t pos = 8 + 4 + 4 + 1 + 4 + 2 + 4 + 8 + 8 + 8 + 2 + 4; // = 57
+                    record_count = (static_cast<int32_t>(record_set[pos]) << 24) |
+                                   (static_cast<int32_t>(record_set[pos+1]) << 16) |
+                                   (static_cast<int32_t>(record_set[pos+2]) << 8) |
+                                   static_cast<int32_t>(record_set[pos+3]);
+                    
+                    std::cout << "[produce_raw_batch] Storing raw batch with " << record_count << " records\n";
+                    
+                    // Store the raw batch (only updates baseOffset, keeps original CRC)
+                    base_offset = produce_raw_batch(topic_name, partition_id, record_set, record_count);
+                }
+                
+                writer.write_int16(static_cast<int16_t>(ErrorCode::None));
+                writer.write_int64(base_offset);
+                
+                // Append time (v2+)
+                if (header.api_version >= 2) {
+                    writer.write_int64(-1); // log append time
+                }
+                
+                // Log start offset (v5+)
+                if (header.api_version >= 5) {
+                    writer.write_int64(0);
+                }
+                
+                // Record errors (v8+)
+                if (header.api_version >= 8) {
+                    if (is_flexible) {
+                        writer.write_unsigned_varint(1); // empty COMPACT_ARRAY (length 0+1)
+                    } else {
+                        writer.write_int32(0);
+                    }
+                    // Error message (v8+) - COMPACT_NULLABLE_STRING
+                    if (is_flexible) {
+                        writer.write_unsigned_varint(0); // null string
+                    }
+                }
+                
+                // Partition tagged fields for flexible versions
+                if (is_flexible) {
+                    writer.write_unsigned_varint(0); // no tagged fields
+                }
+            } catch (const std::exception& e) {
+                writer.write_int16(static_cast<int16_t>(ErrorCode::Unknown));
+                writer.write_int64(-1);
+                if (header.api_version >= 2) writer.write_int64(-1);
+                if (header.api_version >= 5) writer.write_int64(-1);
+                if (header.api_version >= 8) {
+                    if (is_flexible) {
+                        writer.write_unsigned_varint(1); // empty record errors array
+                        writer.write_unsigned_varint(0); // null error message
+                    } else {
+                        writer.write_int32(0);
+                    }
+                }
+                if (is_flexible) writer.write_unsigned_varint(0);
+            }
+        }
+        
+        // Topic tagged fields for flexible versions
+        if (is_flexible) {
+            reader.read_unsigned_varint(); // skip request tagged fields
+            writer.write_unsigned_varint(0); // no response tagged fields
+        }
+    }
+    
+    // Request tagged fields for flexible versions
+    if (is_flexible) {
+        reader.read_unsigned_varint(); // skip tagged fields
+    }
+    
+    // Throttle time (v1+)
+    if (header.api_version >= 1) {
+        writer.write_int32(0);
+    }
+    
+    // Response tagged fields for flexible versions
+    if (is_flexible) {
+        writer.write_unsigned_varint(0); // no tagged fields
+    }
+    
+    auto response = writer.data();
+    std::cout << "  Produce response size=" << response.size() << " bytes: ";
+    for (size_t i = 0; i < std::min(response.size(), size_t(50)); ++i) {
+        printf("%02x ", response[i]);
+    }
+    std::cout << (response.size() > 50 ? "..." : "") << "\n";
+    
+    return response;
+}
+
+std::vector<uint8_t> Broker::handle_fetch_request(
+    const protocol::RequestHeader& header, protocol::BufferReader& reader) {
+    
+    using namespace protocol;
+    
+    // We only support Fetch v12 - reject other versions
+    bool is_flexible = (header.api_version >= 12);
+    
+    std::cout << "  Fetch request v" << header.api_version << " (flexible=" << is_flexible << ")\n";
+    
+    // Return UNSUPPORTED_VERSION for v13+ since they use topic_id (UUID) format
+    if (header.api_version > 12) {
+        std::cout << "    Unsupported Fetch version, returning error\n";
+        BufferWriter writer;
+        writer.write_int32(header.correlation_id);
+        writer.write_unsigned_varint(0); // header tagged fields
+        writer.write_int32(0); // throttle_time
+        writer.write_int16(static_cast<int16_t>(ErrorCode::UnsupportedVersion));
+        writer.write_int32(0); // session_id
+        writer.write_unsigned_varint(1); // empty topics array
+        writer.write_unsigned_varint(0); // tagged fields
+        return writer.data();
+    }
+    
+    // Parse Fetch request
+    int32_t replica_id = reader.read_int32();
+    int32_t max_wait_ms = reader.read_int32();
+    int32_t min_bytes = reader.read_int32();
+    
+    // max_bytes (v3+)
+    int32_t max_bytes = 0x7fffffff;
+    if (header.api_version >= 3) {
+        max_bytes = reader.read_int32();
+    }
+    
+    // isolation_level (v4+)
+    if (header.api_version >= 4) {
+        reader.read_int8();
+    }
+    
+    // session_id, session_epoch (v7+)
+    int32_t session_id = 0;
+    if (header.api_version >= 7) {
+        session_id = reader.read_int32();
+        reader.read_int32(); // session_epoch
+    }
+    
+    // Parse topics array
+    struct FetchPartition {
+        int32_t partition_id;
+        int32_t current_leader_epoch;
+        int64_t fetch_offset;
+        int64_t log_start_offset;
+        int32_t partition_max_bytes;
+    };
+    struct FetchTopic {
+        std::string name;
+        std::vector<uint8_t> topic_id; // 16-byte UUID for v13+
+        std::vector<FetchPartition> partitions;
+    };
+    std::vector<FetchTopic> topics;
+    
+    int32_t topic_count;
+    if (is_flexible) {
+        uint32_t n = reader.read_unsigned_varint();
+        topic_count = (n > 0) ? static_cast<int32_t>(n - 1) : 0;
+    } else {
+        topic_count = reader.read_int32();
+    }
+    
+    for (int32_t t = 0; t < topic_count; ++t) {
+        FetchTopic topic;
+        
+        // v12 uses topic name (compact string for flexible format)
+        if (is_flexible) {
+            topic.name = reader.read_compact_string();
+        } else {
+            topic.name = reader.read_string();
+        }
+        
+        int32_t partition_count;
+        if (is_flexible) {
+            uint32_t n = reader.read_unsigned_varint();
+            partition_count = (n > 0) ? static_cast<int32_t>(n - 1) : 0;
+        } else {
+            partition_count = reader.read_int32();
+        }
+        
+        for (int32_t p = 0; p < partition_count; ++p) {
+            FetchPartition fp;
+            fp.partition_id = reader.read_int32();
+            fp.current_leader_epoch = (header.api_version >= 9) ? reader.read_int32() : -1;
+            fp.fetch_offset = reader.read_int64();
+            
+            // last_fetched_epoch (v12+)
+            if (header.api_version >= 12) {
+                reader.read_int32(); // last_fetched_epoch
+            }
+            
+            fp.log_start_offset = (header.api_version >= 5) ? reader.read_int64() : -1;
+            fp.partition_max_bytes = reader.read_int32();
+            
+            if (is_flexible) {
+                reader.read_unsigned_varint(); // partition tagged fields
+            }
+            
+            topic.partitions.push_back(fp);
+        }
+        
+        if (is_flexible) {
+            reader.read_unsigned_varint(); // topic tagged fields
+        }
+        
+        topics.push_back(topic);
+    }
+    
+    // forgotten_topics_data (v7+)
+    if (header.api_version >= 7) {
+        int32_t forgotten_count;
+        if (is_flexible) {
+            uint32_t n = reader.read_unsigned_varint();
+            forgotten_count = (n > 0) ? static_cast<int32_t>(n - 1) : 0;
+        } else {
+            forgotten_count = reader.read_int32();
+        }
+        for (int32_t i = 0; i < forgotten_count; ++i) {
+            // Skip topic name or UUID
+            if (header.api_version >= 13) {
+                for (int j = 0; j < 16; ++j) reader.read_int8(); // topic_id UUID
+            } else if (is_flexible) {
+                reader.read_compact_string();
+            } else {
+                reader.read_string();
+            }
+            // Skip partitions
+            int32_t fp_count;
+            if (is_flexible) {
+                uint32_t n = reader.read_unsigned_varint();
+                fp_count = (n > 0) ? static_cast<int32_t>(n - 1) : 0;
+            } else {
+                fp_count = reader.read_int32();
+            }
+            for (int32_t j = 0; j < fp_count; ++j) {
+                reader.read_int32(); // partition
+            }
+            if (is_flexible) {
+                reader.read_unsigned_varint(); // tagged fields
+            }
+        }
+    }
+    
+    // rack_id (v11+)
+    if (header.api_version >= 11) {
+        if (is_flexible) {
+            reader.read_compact_string();
+        } else {
+            reader.read_string();
+        }
+    }
+    
+    // tagged fields at end of request
+    if (is_flexible) {
+        reader.read_unsigned_varint();
+    }
+    
+    // Build response
+    BufferWriter writer;
+    writer.write_int32(header.correlation_id);
+    
+    // Response header v1 for flexible versions - TAG_BUFFER
+    if (is_flexible) {
+        writer.write_unsigned_varint(0);
+    }
+    
+    // Throttle time (v1+)
+    if (header.api_version >= 1) {
+        writer.write_int32(0);
+    }
+    
+    // Error code (v7+)
+    if (header.api_version >= 7) {
+        writer.write_int16(static_cast<int16_t>(ErrorCode::None));
+        writer.write_int32(session_id); // session_id
+    }
+    
+    // Topics array
+    if (is_flexible) {
+        writer.write_unsigned_varint(static_cast<uint32_t>(topics.size() + 1));
+    } else {
+        writer.write_int32(static_cast<int32_t>(topics.size()));
+    }
+    
+    for (const auto& topic : topics) {
+        // v12 uses topic name (compact string for flexible format)
+        if (is_flexible) {
+            writer.write_compact_string(topic.name);
+        } else {
+            writer.write_string(topic.name);
+        }
+        
+        // Partitions array
+        if (is_flexible) {
+            writer.write_unsigned_varint(static_cast<uint32_t>(topic.partitions.size() + 1));
+        } else {
+            writer.write_int32(static_cast<int32_t>(topic.partitions.size()));
+        }
+        
+        for (const auto& fp : topic.partitions) {
+            writer.write_int32(fp.partition_id);
+            
+            // Get partition data
+            Partition* partition = get_partition(topic.name, fp.partition_id);
+            
+            if (!partition) {
+                // Partition not found
+                writer.write_int16(static_cast<int16_t>(ErrorCode::UnknownTopicOrPartition));
+                writer.write_int64(0); // high_watermark
+                if (header.api_version >= 4) writer.write_int64(-1); // last_stable_offset
+                if (header.api_version >= 5) writer.write_int64(0);  // log_start_offset
+                if (header.api_version >= 4) {
+                    // aborted_transactions
+                    if (is_flexible) writer.write_unsigned_varint(1);
+                    else writer.write_int32(0);
+                }
+                if (header.api_version >= 11) writer.write_int32(-1); // preferred_read_replica
+                // records (null)
+                if (is_flexible) writer.write_unsigned_varint(0);
+                else writer.write_int32(-1);
+                if (is_flexible) writer.write_unsigned_varint(0); // tagged fields
+                continue;
+            }
+            
+            // Fetch raw bytes directly from log file (already in Kafka format)
+            auto [raw_data, record_count] = fetch_raw(topic.name, fp.partition_id, 
+                                                       fp.fetch_offset, 
+                                                       static_cast<size_t>(fp.partition_max_bytes));
+            
+            int64_t high_watermark = partition->get_log_end_offset();
+            int64_t log_start_offset = partition->get_log_start_offset();
+            
+            std::cout << "    topic=" << topic.name << " partition=" << fp.partition_id 
+                      << " fetch_offset=" << fp.fetch_offset 
+                      << " hwm=" << high_watermark << " raw_bytes=" << raw_data.size()
+                      << " records=" << record_count << "\n";
+            
+            writer.write_int16(static_cast<int16_t>(ErrorCode::None));
+            writer.write_int64(high_watermark);
+            
+            if (header.api_version >= 4) {
+                writer.write_int64(high_watermark); // last_stable_offset
+            }
+            if (header.api_version >= 5) {
+                writer.write_int64(log_start_offset);
+            }
+            if (header.api_version >= 4) {
+                // aborted_transactions (empty)
+                if (is_flexible) writer.write_unsigned_varint(1);
+                else writer.write_int32(0);
+            }
+            if (header.api_version >= 11) {
+                writer.write_int32(-1); // preferred_read_replica
+            }
+            
+            // Write raw log data (already in Kafka RecordBatch format)
+            // In flexible versions (v12+), records use compact_bytes format (varint size + 1)
+            // In non-flexible versions, it uses int32 size
+            if (raw_data.empty()) {
+                // No records - null bytes
+                if (is_flexible) {
+                    writer.write_unsigned_varint(0); // compact null (0 = null)
+                } else {
+                    writer.write_int32(-1);
+                }
+            } else {
+                // Write raw data directly - it's already in Kafka format
+                if (is_flexible) {
+                    // compact_bytes: write size+1 as varint, then data
+                    writer.write_unsigned_varint(static_cast<uint32_t>(raw_data.size() + 1));
+                    writer.write_raw(raw_data.data(), raw_data.size());
+                } else {
+                    writer.write_int32(static_cast<int32_t>(raw_data.size()));
+                    writer.write_raw(raw_data.data(), raw_data.size());
+                }
+            }
+            
+            // Partition tagged fields
+            if (is_flexible) {
+                writer.write_unsigned_varint(0);
+            }
+        }
+        
+        // Topic tagged fields
+        if (is_flexible) {
+            writer.write_unsigned_varint(0);
+        }
+    }
+    
+    // Response tagged fields
+    if (is_flexible) {
+        writer.write_unsigned_varint(0);
+    }
+    
+    return writer.data();
+}
+
+std::vector<uint8_t> Broker::handle_list_offsets_request(
+    const protocol::RequestHeader& header, protocol::BufferReader& reader) {
+    
+    using namespace protocol;
+    
+    // ListOffsets v6+ uses flexible format
+    bool is_flexible = (header.api_version >= 6);
+    
+    std::cout << "  ListOffsets v" << header.api_version << " (flexible=" << is_flexible << ")\n";
+    
+    // Parse request
+    // replica_id (all versions)
+    int32_t replica_id = reader.read_int32();
+    std::cout << "    replica_id=" << replica_id << "\n";
+    
+    // isolation_level (v2+)
+    if (header.api_version >= 2) {
+        int8_t iso = reader.read_int8();
+        std::cout << "    isolation_level=" << (int)iso << "\n";
+    }
+    
+    // Parse topics array
+    struct OffsetPartition {
+        int32_t partition_id;
+        int32_t current_leader_epoch;
+        int64_t timestamp;
+    };
+    struct OffsetTopic {
+        std::string name;
+        std::vector<OffsetPartition> partitions;
+    };
+    std::vector<OffsetTopic> topics;
+    
+    int32_t topic_count;
+    if (is_flexible) {
+        uint32_t n = reader.read_unsigned_varint();
+        topic_count = (n > 0) ? static_cast<int32_t>(n - 1) : 0;
+    } else {
+        topic_count = reader.read_int32();
+    }
+    
+    for (int32_t t = 0; t < topic_count; ++t) {
+        OffsetTopic topic;
+        if (is_flexible) {
+            topic.name = reader.read_compact_string();
+        } else {
+            topic.name = reader.read_string();
+        }
+        
+        int32_t partition_count;
+        if (is_flexible) {
+            uint32_t n = reader.read_unsigned_varint();
+            partition_count = (n > 0) ? static_cast<int32_t>(n - 1) : 0;
+        } else {
+            partition_count = reader.read_int32();
+        }
+        
+        for (int32_t p = 0; p < partition_count; ++p) {
+            OffsetPartition op;
+            op.partition_id = reader.read_int32();
+            op.current_leader_epoch = (header.api_version >= 4) ? reader.read_int32() : -1;
+            op.timestamp = reader.read_int64();
+            
+            std::cout << "    partition=" << op.partition_id 
+                      << " leader_epoch=" << op.current_leader_epoch 
+                      << " timestamp=" << op.timestamp << "\n";
+            
+            if (is_flexible) {
+                reader.read_unsigned_varint(); // partition tagged fields
+            }
+            
+            topic.partitions.push_back(op);
+        }
+        
+        if (is_flexible) {
+            reader.read_unsigned_varint(); // topic tagged fields
+        }
+        
+        // Sort partitions by partition_id for consistent response ordering
+        std::sort(topic.partitions.begin(), topic.partitions.end(),
+            [](const OffsetPartition& a, const OffsetPartition& b) {
+                return a.partition_id < b.partition_id;
+            });
+        
+        topics.push_back(topic);
+    }
+    
+    // Build response
+    BufferWriter writer;
+    writer.write_int32(header.correlation_id);
+    
+    // Response header v1 for flexible versions - TAG_BUFFER
+    if (is_flexible) {
+        writer.write_unsigned_varint(0);
+    }
+    
+    // Throttle time (v2+)
+    if (header.api_version >= 2) {
+        writer.write_int32(0);
+    }
+    
+    // Topics array
+    if (is_flexible) {
+        writer.write_unsigned_varint(static_cast<uint32_t>(topics.size() + 1));
+    } else {
+        writer.write_int32(static_cast<int32_t>(topics.size()));
+    }
+    
+    for (const auto& topic : topics) {
+        // Topic name
+        if (is_flexible) {
+            writer.write_compact_string(topic.name);
+        } else {
+            writer.write_string(topic.name);
+        }
+        
+        // Partitions array
+        if (is_flexible) {
+            writer.write_unsigned_varint(static_cast<uint32_t>(topic.partitions.size() + 1));
+        } else {
+            writer.write_int32(static_cast<int32_t>(topic.partitions.size()));
+        }
+        
+        for (const auto& op : topic.partitions) {
+            writer.write_int32(op.partition_id);
+            
+            Partition* partition = get_partition(topic.name, op.partition_id);
+            
+            if (!partition) {
+                writer.write_int16(static_cast<int16_t>(ErrorCode::UnknownTopicOrPartition));
+                // v8+ has different field order
+                if (header.api_version >= 8) {
+                    writer.write_int64(-1); // offset
+                    writer.write_int64(-1); // timestamp
+                    writer.write_int32(-1); // leader_epoch
+                } else {
+                    if (header.api_version >= 1) {
+                        writer.write_int64(-1); // timestamp
+                    }
+                    writer.write_int64(-1); // offset
+                    if (header.api_version >= 4) {
+                        writer.write_int32(-1); // leader_epoch
+                    }
+                }
+                if (is_flexible) {
+                    writer.write_unsigned_varint(0); // tagged fields
+                }
+                continue;
+            }
+            
+            int64_t offset;
+            int64_t timestamp = -1;
+            
+            // timestamp: -1 = latest, -2 = earliest, -3 = max timestamp (v7+)
+            if (op.timestamp == -1) {
+                // Latest offset
+                offset = partition->get_log_end_offset();
+            } else if (op.timestamp == -2) {
+                // Earliest offset
+                offset = partition->get_log_start_offset();
+            } else {
+                // Find offset by timestamp (simplified - return end offset)
+                offset = partition->get_log_end_offset();
+            }
+            
+            std::cout << "    -> returning offset=" << offset << " timestamp=" << timestamp << "\n";
+            
+            writer.write_int16(static_cast<int16_t>(ErrorCode::None));
+            
+            // ListOffsets response format (all versions v1+):
+            // error_code, timestamp, offset, [leader_epoch v4+]
+            // Note: The field order is the same for all versions
+            if (header.api_version >= 1) {
+                writer.write_int64(timestamp);
+            }
+            writer.write_int64(offset);
+            if (header.api_version >= 4) {
+                writer.write_int32(0); // leader_epoch (0 = valid epoch)
+            }
+            if (is_flexible) {
+                writer.write_unsigned_varint(0); // tagged fields
+            }
+        }
+        
+        // Topic tagged fields
+        if (is_flexible) {
+            writer.write_unsigned_varint(0);
+        }
+    }
+    
+    // Response tagged fields
+    if (is_flexible) {
+        writer.write_unsigned_varint(0);
+    }
+    
+    auto response = writer.data();
+    std::cout << "  ListOffsets response size=" << response.size() << " bytes:\n    ";
+    for (size_t i = 0; i < response.size(); ++i) {
+        printf("%02x ", response[i]);
+        if ((i + 1) % 25 == 0) std::cout << "\n    ";
+    }
+    std::cout << "\n";
+    
+    return response;
+}
+
+std::vector<uint8_t> Broker::handle_metadata_request(
+    const protocol::RequestHeader& header, protocol::BufferReader& reader) {
+    
+    using namespace protocol;
+    
+    // v9+ usa formato flexible
+    bool flexible = header.api_version >= 9;
+    
+    // Parse topics (pode ser null = todos os tópicos)
+    std::vector<std::string> requested_topics;
+    bool all_topics = false;
+    
+    try {
+        if (flexible) {
+            // Compact array: length + 1
+            uint32_t topics_count = reader.read_unsigned_varint();
+            if (topics_count == 0) {
+                all_topics = true; // null array
+            } else {
+                topics_count--;
+                for (uint32_t i = 0; i < topics_count; ++i) {
+                    // Compact string: length + 1
+                    uint32_t name_len = reader.read_unsigned_varint();
+                    if (name_len > 0) {
+                        name_len--;
+                        std::string name(name_len, '\0');
+                        for (uint32_t j = 0; j < name_len; j++) {
+                            name[j] = static_cast<char>(reader.read_int8());
+                        }
+                        requested_topics.push_back(name);
+                    }
+                    // Tagged fields para cada entry
+                    reader.read_unsigned_varint();
+                }
+            }
+            // allow_auto_topic_creation
+            reader.read_bool();
+            // include_topic_authorized_operations (v8+)
+            reader.read_bool();
+            // tagged fields
+            reader.read_unsigned_varint();
+        } else {
+            int32_t topics_count = reader.read_int32();
+            if (topics_count < 0) {
+                all_topics = true;
+            } else {
+                for (int32_t i = 0; i < topics_count; ++i) {
+                    requested_topics.push_back(reader.read_string());
+                }
+            }
+            // Auto-create topics (v4+)
+            if (header.api_version >= 4 && reader.remaining() > 0) {
+                try {
+                    reader.read_bool();
+                } catch (...) {}
+            }
+        }
+    } catch (...) {
+        all_topics = true;
+    }
+    
+    BufferWriter writer;
+    writer.write_int32(header.correlation_id);
+    
+    if (flexible) {
+        // Tagged fields no header
+        writer.write_unsigned_varint(0);
+    }
+    
+    // Throttle time (v3+)
+    if (header.api_version >= 3) {
+        writer.write_int32(0);
+    }
+    
+    // Brokers array
+    if (flexible) {
+        writer.write_unsigned_varint(2); // 1 broker + 1
+        writer.write_int32(config_.broker_id);
+        // Compact string for host
+        writer.write_unsigned_varint(static_cast<uint32_t>(config_.host.size() + 1));
+        for (char c : config_.host) {
+            writer.write_int8(static_cast<int8_t>(c));
+        }
+        writer.write_int32(config_.port);
+        // Rack (nullable compact string)
+        writer.write_unsigned_varint(0); // null
+        // Tagged fields
+        writer.write_unsigned_varint(0);
+    } else {
+        writer.write_int32(1); // count
+        writer.write_int32(config_.broker_id);
+        writer.write_string(config_.host);
+        writer.write_int32(config_.port);
+        if (header.api_version >= 1) {
+            writer.write_nullable_string(nullptr); // rack
+        }
+    }
+    
+    // Cluster ID (v2+)
+    if (header.api_version >= 2) {
+        if (flexible) {
+            writer.write_unsigned_varint(static_cast<uint32_t>(config_.cluster_id.size() + 1));
+            for (char c : config_.cluster_id) {
+                writer.write_int8(static_cast<int8_t>(c));
+            }
+        } else {
+            writer.write_nullable_string(&config_.cluster_id);
+        }
+    }
+    
+    // Controller ID (v1+)
+    if (header.api_version >= 1) {
+        writer.write_int32(config_.broker_id);
+    }
+    
+    // Topics
+    std::shared_lock<std::shared_mutex> lock(topics_mutex_);
+    
+    // Coletar tópicos com informações de partição
+    // Para tópicos reais (do disco), temos partitions. Para tópicos criados recentemente,
+    // usamos as informações do protocol_handler
+    
+    struct TopicMetadata {
+        std::string name;
+        int32_t num_partitions;
+        const std::vector<std::unique_ptr<Partition>>* real_partitions; // nullptr se virtual
+    };
+    
+    std::vector<TopicMetadata> topics_to_return;
+    std::set<std::string> topic_names_added;
+    
+    // Primeiro, adiciona tópicos reais do disco
+    if (all_topics || requested_topics.empty()) {
+        for (const auto& [topic_name, partitions] : topics_) {
+            topics_to_return.push_back({topic_name, static_cast<int32_t>(partitions.size()), &partitions});
+            topic_names_added.insert(topic_name);
+        }
+    } else {
+        for (const auto& req_topic : requested_topics) {
+            auto it = topics_.find(req_topic);
+            if (it != topics_.end()) {
+                topics_to_return.push_back({req_topic, static_cast<int32_t>(it->second.size()), &it->second});
+                topic_names_added.insert(req_topic);
+            }
+        }
+    }
+    
+    // Também incluir tópicos criados via CreateTopics (armazenados no protocol_handler)
+    auto stored_topics = protocol_handler_->get_stored_topics();
+    for (const auto& t : stored_topics) {
+        if (topic_names_added.find(t.name) == topic_names_added.end()) {
+            // Tópico ainda não está na lista, adiciona como "virtual"
+            if (all_topics || requested_topics.empty() ||
+                std::find(requested_topics.begin(), requested_topics.end(), t.name) != requested_topics.end()) {
+                topics_to_return.push_back({t.name, t.num_partitions, nullptr});
+                topic_names_added.insert(t.name);
+            }
+        }
+    }
+    
+    // Debug: mostrar tópicos sendo retornados
+    if (!topics_to_return.empty()) {
+        std::cout << "  Metadata returning " << topics_to_return.size() << " topics: ";
+        for (const auto& t : topics_to_return) std::cout << t.name << " ";
+        std::cout << "\n";
+    }
+    
+    if (flexible) {
+        writer.write_unsigned_varint(static_cast<uint32_t>(topics_to_return.size() + 1));
+    } else {
+        writer.write_int32(static_cast<int32_t>(topics_to_return.size()));
+    }
+    
+    for (const auto& topic_meta : topics_to_return) {
+        writer.write_int16(static_cast<int16_t>(ErrorCode::None));
+        
+        // Topic name
+        if (flexible) {
+            writer.write_unsigned_varint(static_cast<uint32_t>(topic_meta.name.size() + 1));
+            for (char c : topic_meta.name) {
+                writer.write_int8(static_cast<int8_t>(c));
+            }
+        } else {
+            writer.write_string(topic_meta.name);
+        }
+        
+        // Topic ID (v10+)
+        if (header.api_version >= 10) {
+            // Generate or retrieve topic UUID
+            auto topic_uuid = const_cast<Broker*>(this)->get_or_create_topic_id(topic_meta.name);
+            for (int i = 0; i < 16; i++) {
+                writer.write_int8(static_cast<int8_t>(topic_uuid[i]));
+            }
+        }
+        
+        // Is internal (v1+)
+        if (header.api_version >= 1) {
+            writer.write_bool(false);
+        }
+        
+        // Partitions - use real partitions or create virtual ones
+        int32_t num_partitions = topic_meta.real_partitions ? 
+            static_cast<int32_t>(topic_meta.real_partitions->size()) : topic_meta.num_partitions;
+        
+        if (flexible) {
+            writer.write_unsigned_varint(static_cast<uint32_t>(num_partitions + 1));
+        } else {
+            writer.write_int32(num_partitions);
+        }
+        
+        if (topic_meta.real_partitions) {
+            // Partições reais
+            for (const auto& partition : *topic_meta.real_partitions) {
+                writer.write_int16(static_cast<int16_t>(ErrorCode::None));
+                writer.write_int32(partition->get_partition_id());
+                writer.write_int32(config_.broker_id); // leader
+                
+                // Leader epoch (v7+)
+                if (header.api_version >= 7) {
+                    writer.write_int32(0);
+                }
+                
+                // Replicas
+                if (flexible) {
+                    writer.write_unsigned_varint(2); // 1 replica + 1
+                } else {
+                    writer.write_int32(1);
+                }
+                writer.write_int32(config_.broker_id);
+                
+                // ISR
+                if (flexible) {
+                    writer.write_unsigned_varint(2); // 1 isr + 1
+                } else {
+                    writer.write_int32(1);
+                }
+                writer.write_int32(config_.broker_id);
+                
+                // Offline replicas (v5+)
+                if (header.api_version >= 5) {
+                    if (flexible) {
+                        writer.write_unsigned_varint(1); // 0 + 1
+                    } else {
+                        writer.write_int32(0);
+                    }
+                }
+                
+                // Tagged fields for partition (flexible)
+                if (flexible) {
+                    writer.write_unsigned_varint(0);
+                }
+            }
+        } else {
+            // Partições virtuais (tópico recém criado, ainda não materializado)
+            for (int32_t p = 0; p < num_partitions; p++) {
+                writer.write_int16(static_cast<int16_t>(ErrorCode::None));
+                writer.write_int32(p); // partition id
+                writer.write_int32(config_.broker_id); // leader
+                
+                // Leader epoch (v7+)
+                if (header.api_version >= 7) {
+                    writer.write_int32(0);
+                }
+                
+                // Replicas
+                if (flexible) {
+                    writer.write_unsigned_varint(2);
+                } else {
+                    writer.write_int32(1);
+                }
+                writer.write_int32(config_.broker_id);
+                
+                // ISR
+                if (flexible) {
+                    writer.write_unsigned_varint(2);
+                } else {
+                    writer.write_int32(1);
+                }
+                writer.write_int32(config_.broker_id);
+                
+                // Offline replicas (v5+)
+                if (header.api_version >= 5) {
+                    if (flexible) {
+                        writer.write_unsigned_varint(1);
+                    } else {
+                        writer.write_int32(0);
+                    }
+                }
+                
+                // Tagged fields for partition (flexible)
+                if (flexible) {
+                    writer.write_unsigned_varint(0);
+                }
+            }
+        }
+        
+        // Topic authorized operations (v8+)
+        if (header.api_version >= 8) {
+            writer.write_int32(-2147483648); // not requested
+        }
+        
+        // Tagged fields for topic (flexible)
+        if (flexible) {
+            writer.write_unsigned_varint(0);
+        }
+    }
+    
+    // Cluster authorized operations (v8+)
+    if (header.api_version >= 8) {
+        writer.write_int32(-2147483648);
+    }
+    
+    // Tagged fields no final (flexible)
+    if (flexible) {
+        writer.write_unsigned_varint(0);
+    }
+    
+    return writer.data();
+}
+
+} // namespace eventhorizon

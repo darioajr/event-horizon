@@ -1,0 +1,188 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  BUILD_TYPE: Release
+  VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}/vcpkg-cache
+
+jobs:
+  # ==========================================================================
+  # Linux Build
+  # ==========================================================================
+  build-linux:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ninja-build
+    
+    - name: Setup vcpkg
+      uses: lukka/run-vcpkg@v11
+      with:
+        vcpkgGitCommitId: '2024.01.12'
+    
+    - name: Create vcpkg cache directory
+      run: mkdir -p ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+    
+    - name: Cache vcpkg packages
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+        key: vcpkg-linux-${{ hashFiles('vcpkg.json') }}
+        restore-keys: |
+          vcpkg-linux-
+    
+    - name: Configure CMake
+      run: |
+        cmake --preset linux-release
+    
+    - name: Build
+      run: |
+        cmake --build build/linux-release --config ${{ env.BUILD_TYPE }}
+    
+    - name: Test
+      working-directory: build/linux-release
+      run: ctest --build-config ${{ env.BUILD_TYPE }} --output-on-failure
+    
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: event-horizon-linux
+        path: build/linux-release/event_horizon
+        retention-days: 7
+
+  # ==========================================================================
+  # Windows Build
+  # ==========================================================================
+  build-windows:
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup vcpkg
+      uses: lukka/run-vcpkg@v11
+      with:
+        vcpkgGitCommitId: '2024.01.12'
+    
+    - name: Create vcpkg cache directory
+      run: New-Item -ItemType Directory -Force -Path ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+    
+    - name: Cache vcpkg packages
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+        key: vcpkg-windows-${{ hashFiles('vcpkg.json') }}
+        restore-keys: |
+          vcpkg-windows-
+    
+    - name: Configure CMake
+      run: |
+        cmake --preset windows-release
+    
+    - name: Build
+      run: |
+        cmake --build build/windows-release --config ${{ env.BUILD_TYPE }}
+    
+    - name: Test
+      working-directory: build/windows-release
+      run: ctest --build-config ${{ env.BUILD_TYPE }} --output-on-failure
+    
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: event-horizon-windows
+        path: build/windows-release/${{ env.BUILD_TYPE }}/event_horizon.exe
+        retention-days: 7
+
+  # ==========================================================================
+  # Windows Static Build
+  # ==========================================================================
+  build-windows-static:
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup vcpkg
+      uses: lukka/run-vcpkg@v11
+      with:
+        vcpkgGitCommitId: '2024.01.12'
+    
+    - name: Create vcpkg cache directory
+      run: New-Item -ItemType Directory -Force -Path ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+    
+    - name: Cache vcpkg packages
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
+        key: vcpkg-windows-static-${{ hashFiles('vcpkg.json') }}
+        restore-keys: |
+          vcpkg-windows-static-
+    
+    - name: Configure CMake (Static)
+      run: |
+        cmake --preset windows-static
+    
+    - name: Build
+      run: |
+        cmake --build build/windows-static --config ${{ env.BUILD_TYPE }}
+    
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: event-horizon-windows-static
+        path: build/windows-static/${{ env.BUILD_TYPE }}/event_horizon.exe
+        retention-days: 7
+
+  # ==========================================================================
+  # Create Release
+  # ==========================================================================
+  release:
+    needs: [build-linux, build-windows, build-windows-static]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+    - name: Download Linux artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: event-horizon-linux
+        path: ./linux
+    
+    - name: Download Windows artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: event-horizon-windows
+        path: ./windows
+    
+    - name: Download Windows Static artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: event-horizon-windows-static
+        path: ./windows-static
+    
+    - name: Create archives
+      run: |
+        chmod +x ./linux/event_horizon
+        tar -czvf event-horizon-linux-x64.tar.gz -C ./linux event_horizon
+        zip -j event-horizon-windows-x64.zip ./windows/event_horizon.exe
+        zip -j event-horizon-windows-x64-static.zip ./windows-static/event_horizon.exe
+    
+    - name: Upload release assets
+      uses: softprops/action-gh-release@v1
+      if: startsWith(github.ref, 'refs/tags/')
+      with:
+        files: |
+          event-horizon-linux-x64.tar.gz
+          event-horizon-windows-x64.zip
+          event-horizon-windows-x64-static.zip
