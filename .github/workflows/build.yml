@@ -119,9 +119,10 @@ jobs:
         retention-days: 30
 
   # ==========================================================================
-  # Linux ARM64 Build
+  # Linux ARM64 Build (DISABLED)
   # ==========================================================================
   build-linux-arm64:
+    if: false  # Temporarily disabled
     runs-on: ubuntu-24.04-arm
     needs: version
     
@@ -175,9 +176,10 @@ jobs:
         retention-days: 30
 
   # ==========================================================================
-  # macOS x64 Build (Intel)
+  # macOS x64 Build (Intel) (DISABLED)
   # ==========================================================================
   build-macos-x64:
+    if: false  # Temporarily disabled
     runs-on: macos-15-intel
     needs: version
     
@@ -227,9 +229,10 @@ jobs:
         retention-days: 30
 
   # ==========================================================================
-  # macOS ARM64 Build (Apple Silicon)
+  # macOS ARM64 Build (Apple Silicon) (DISABLED)
   # ==========================================================================
   build-macos-arm64:
+    if: false  # Temporarily disabled
     runs-on: macos-14
     needs: version
     
@@ -279,9 +282,10 @@ jobs:
         retention-days: 30
 
   # ==========================================================================
-  # Windows x64 Build
+  # Windows x64 Build (DISABLED)
   # ==========================================================================
   build-windows-x64:
+    if: false  # Temporarily disabled
     runs-on: windows-latest
     needs: version
     
@@ -406,7 +410,7 @@ jobs:
   # Create Release
   # ==========================================================================
   release:
-    needs: [version, build-linux-x64, build-linux-arm64, build-macos-x64, build-macos-arm64, build-windows-x64, build-windows-static]
+    needs: [version, build-linux-x64, build-windows-static]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     
@@ -427,25 +431,6 @@ jobs:
         tar -czvf event-horizon-${VERSION}-linux-x64.tar.gz \
           -C ./artifacts/event-horizon-${VERSION}-linux-x64 event_horizon
         
-        # Linux ARM64
-        chmod +x ./artifacts/event-horizon-${VERSION}-linux-arm64/event_horizon
-        tar -czvf event-horizon-${VERSION}-linux-arm64.tar.gz \
-          -C ./artifacts/event-horizon-${VERSION}-linux-arm64 event_horizon
-        
-        # macOS x64
-        chmod +x ./artifacts/event-horizon-${VERSION}-macos-x64/event_horizon
-        tar -czvf event-horizon-${VERSION}-macos-x64.tar.gz \
-          -C ./artifacts/event-horizon-${VERSION}-macos-x64 event_horizon
-        
-        # macOS ARM64
-        chmod +x ./artifacts/event-horizon-${VERSION}-macos-arm64/event_horizon
-        tar -czvf event-horizon-${VERSION}-macos-arm64.tar.gz \
-          -C ./artifacts/event-horizon-${VERSION}-macos-arm64 event_horizon
-        
-        # Windows x64
-        zip -j event-horizon-${VERSION}-windows-x64.zip \
-          ./artifacts/event-horizon-${VERSION}-windows-x64/event_horizon.exe
-        
         # Windows Static
         zip -j event-horizon-${VERSION}-windows-static.zip \
           ./artifacts/event-horizon-${VERSION}-windows-static/event_horizon.exe
@@ -463,10 +448,6 @@ jobs:
         generate_release_notes: true
         files: |
           event-horizon-${{ needs.version.outputs.version_full }}-linux-x64.tar.gz
-          event-horizon-${{ needs.version.outputs.version_full }}-linux-arm64.tar.gz
-          event-horizon-${{ needs.version.outputs.version_full }}-macos-x64.tar.gz
-          event-horizon-${{ needs.version.outputs.version_full }}-macos-arm64.tar.gz
-          event-horizon-${{ needs.version.outputs.version_full }}-windows-x64.zip
           event-horizon-${{ needs.version.outputs.version_full }}-windows-static.zip
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
