@@ -1456,10 +1456,11 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_describe_configs(
             writer.write_string(resource.resource_name);
         }
         
-        // configs array - return common topic configs for TOPIC resource type (2)
+        // configs array - return topic configs for TOPIC resource type (2)
         std::vector<std::pair<std::string, std::string>> configs;
         if (resource.resource_type == 2) { // TOPIC
-            configs = {
+            // Default configs
+            std::unordered_map<std::string, std::string> topic_configs = {
                 {"cleanup.policy", "delete"},
                 {"compression.type", "producer"},
                 {"delete.retention.ms", "86400000"},
@@ -1480,6 +1481,24 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_describe_configs(
                 {"segment.jitter.ms", "0"},
                 {"segment.ms", "604800000"},
             };
+            
+            // Override with actual topic configs if available
+            if (topics_callback_) {
+                auto topics = topics_callback_();
+                for (const auto& topic : topics) {
+                    if (topic.name == resource.resource_name) {
+                        for (const auto& [key, value] : topic.configs) {
+                            topic_configs[key] = value;
+                        }
+                        break;
+                    }
+                }
+            }
+            
+            // Convert to vector for iteration
+            for (const auto& [key, value] : topic_configs) {
+                configs.emplace_back(key, value);
+            }
         }
         
         if (flexible) {
@@ -1562,13 +1581,12 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_create_topics(
     // CreateTopics v5+ uses flexible format
     bool flexible = (header.api_version >= 5);
     
-    // Simplified parsing: only read topic name, num_partitions, replication_factor
-    // Skip everything else to avoid parsing errors
-    
+    // Parse topic creation requests including configs
     struct CreateTopicInfo {
         std::string name;
         int32_t num_partitions;
         int16_t replication_factor;
+        std::unordered_map<std::string, std::string> configs;
     };
     std::vector<CreateTopicInfo> topics;
     
@@ -1617,7 +1635,7 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_create_topics(
                 }
             }
             
-            // Skip configs
+            // Parse configs
             int32_t config_count;
             if (flexible) {
                 config_count = static_cast<int32_t>(reader.read_unsigned_varint()) - 1;
@@ -1625,13 +1643,17 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_create_topics(
                 config_count = reader.read_int32();
             }
             for (int32_t c = 0; c < config_count && c < 1000; ++c) {
+                std::string key, value;
                 if (flexible) {
-                    reader.read_compact_string(); // key
-                    reader.read_compact_nullable_string(); // value
+                    key = reader.read_compact_string();
+                    value = reader.read_compact_nullable_string();
                 } else {
-                    reader.read_string(); // key
-                    reader.read_nullable_string(); // value
+                    key = reader.read_string();
+                    value = reader.read_nullable_string();
                 }
+                topic.configs[key] = value;
+                std::cout << "    Config: " << key << "=" << value << "\n";
+                
                 if (flexible) {
                     reader.read_unsigned_varint(); // tagged fields for config
                 }
@@ -1649,10 +1671,40 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_create_topics(
             topic_info.num_partitions = topic.num_partitions > 0 ? topic.num_partitions : 1;
             topic_info.replication_factor = topic.replication_factor > 0 ? topic.replication_factor : 1;
             topic_info.is_internal = false;
+            
+            // Apply default configs, then override with user-specified configs
+            topic_info.configs = {
+                {"cleanup.policy", "delete"},
+                {"compression.type", "producer"},
+                {"delete.retention.ms", "86400000"},
+                {"file.delete.delay.ms", "60000"},
+                {"flush.messages", "9223372036854775807"},
+                {"flush.ms", "9223372036854775807"},
+                {"index.interval.bytes", "4096"},
+                {"max.compaction.lag.ms", "9223372036854775807"},
+                {"max.message.bytes", "1048588"},
+                {"message.timestamp.type", "CreateTime"},
+                {"min.cleanable.dirty.ratio", "0.5"},
+                {"min.compaction.lag.ms", "0"},
+                {"min.insync.replicas", "1"},
+                {"retention.bytes", "-1"},
+                {"retention.ms", "604800000"},
+                {"segment.bytes", "1073741824"},
+                {"segment.index.bytes", "10485760"},
+                {"segment.jitter.ms", "0"},
+                {"segment.ms", "604800000"},
+            };
+            
+            // Override with user-specified configs
+            for (const auto& [key, value] : topic.configs) {
+                topic_info.configs[key] = value;
+            }
+            
             add_topic(topic_info);
             
             std::cout << "  Created topic: " << topic_info.name 
-                      << " partitions=" << topic_info.num_partitions << "\n";
+                      << " partitions=" << topic_info.num_partitions 
+                      << " configs=" << topic_info.configs.size() << "\n";
         }
     } catch (const std::exception& e) {
         std::cerr << "CreateTopics parse warning (continuing): " << e.what() << "\n";

@@ -272,10 +272,24 @@ struct PartitionDetailInfo {
 // Topic info for metadata
 struct TopicInfo {
     std::string name;
-    int32_t num_partitions;
-    int16_t replication_factor;
+    int32_t num_partitions = 1;
+    int16_t replication_factor = 1;
     bool is_internal = false;
     std::vector<PartitionDetailInfo> partition_details;  // Optional, for DescribeLogDirs
+    std::unordered_map<std::string, std::string> configs;  // Topic configurations
+    
+    // Get config with default value (C++23 style)
+    [[nodiscard]] auto get_config(std::string_view key, std::string_view default_value = "") const -> std::string {
+        if (auto it = configs.find(std::string(key)); it != configs.end()) {
+            return it->second;
+        }
+        return std::string(default_value);
+    }
+    
+    // Check if config exists
+    [[nodiscard]] bool has_config(std::string_view key) const {
+        return configs.contains(std::string(key));
+    }
 };
 
 // Consumer group info
