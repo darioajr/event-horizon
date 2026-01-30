@@ -25,6 +25,25 @@ _deps/
 # vcpkg
 vcpkg_installed/
 
+# Prerequisites
+*.d
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Linker files
+*.ilk
+
+# Debugger Files
+*.pdb
+
 # Compiled binaries
 *.exe
 *.dll
@@ -32,8 +51,15 @@ vcpkg_installed/
 *.dylib
 *.a
 *.lib
-*.o
-*.obj
+*.out
+*.app
+
+# Fortran module files
+*.mod
+*.smod
+
+# Debug information files
+*.dwo
 
 # Logs and data
 *.log
