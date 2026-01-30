@@ -1,25 +1,33 @@
 # Event Horizon - Kafka-Compatible Event Streaming Platform
 
-Um serviço de armazenamento de eventos compatível com o protocolo Apache Kafka, inspirado no MapR Event Horizon, implementado em C++23.
+A Kafka protocol-compatible event storage service, inspired by MapR Event Horizon, implemented in C++23.
 
-## Características
+## Features
 
-- ✅ Protocolo Kafka binário compatível
-- ✅ Armazenamento persistente em disco
-- ✅ Particionamento de tópicos
-- ✅ Servidor TCP multi-threaded
+- ✅ Binary Kafka protocol compatible
+- ✅ Persistent disk storage
+- ✅ Topic partitioning
+- ✅ Multi-threaded TCP server
 - ✅ APIs: Produce, Fetch, Metadata, ApiVersions, Consumer Groups
-- ✅ Serialização big-endian (padrão Kafka)
-- ✅ Build cross-platform (Windows e Linux)
+- ✅ Big-endian serialization (Kafka standard)
+- ✅ Cross-platform build (Windows, Linux, macOS)
 
-## Requisitos
+## Requirements
 
 - CMake 3.16+
 - C++23 compiler (GCC 13+, Clang 17+, MSVC 2022+)
-- vcpkg (gerenciador de pacotes)
-- Ninja (opcional, recomendado para Linux)
+- vcpkg (package manager)
+- Ninja (optional, recommended for Linux/macOS)
 
-## Instalação do vcpkg
+## Supported Platforms
+
+| Platform | x86-64 | ARM64 |
+|----------|--------|-------|
+| Windows  | ✅     | ❌    |
+| Linux    | ✅     | ✅    |
+| macOS    | ✅     | ✅    |
+
+## vcpkg Installation
 
 ### Windows
 
@@ -28,152 +36,158 @@ git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
 cd C:\vcpkg
 .\bootstrap-vcpkg.bat
 
-# Configurar variável de ambiente (PowerShell)
+# Set environment variable (PowerShell)
 $env:VCPKG_ROOT = "C:\vcpkg"
 
-# Ou adicionar permanentemente
+# Or add permanently
 [Environment]::SetEnvironmentVariable("VCPKG_ROOT", "C:\vcpkg", "User")
 ```
 
-### Linux
+### Linux / macOS
 
 ```bash
 git clone https://github.com/microsoft/vcpkg.git ~/vcpkg
 cd ~/vcpkg
 ./bootstrap-vcpkg.sh
 
-# Adicionar ao ~/.bashrc ou ~/.zshrc
+# Add to ~/.bashrc or ~/.zshrc
 export VCPKG_ROOT="$HOME/vcpkg"
 ```
 
-## Compilação
+## Building
 
-As dependências (Boost, nlohmann-json) serão baixadas automaticamente pelo vcpkg.
+Dependencies (Boost, nlohmann-json) are automatically downloaded by vcpkg.
 
-### Windows (PowerShell) - Recomendado
+### Windows (PowerShell) - Recommended
 
 ```powershell
-# Build Release
+# Release build
 .\build.ps1 -BuildType Release
 
-# Build Debug com testes
+# Debug build with tests
 .\build.ps1 -BuildType Debug -Test
 
-# Build com Visual Studio 2022
+# Build with Visual Studio 2022
 .\build.ps1 -Generator vs2022
 
-# Build com Ninja
+# Build with Ninja
 .\build.ps1 -Generator ninja
 
-# Limpar e recompilar
+# Clean and rebuild
 .\build.ps1 -Clean -BuildType Release
 ```
 
 ### Windows (Batch)
 
 ```batch
-REM Build Release
+REM Release build
 build.bat Release
 
-REM Build Release e rodar testes
+REM Release build and run tests
 build.bat Release --test
 ```
 
 ### Windows (CMake Presets)
 
 ```powershell
-# Configurar
+# Configure
 cmake --preset windows-release
 
-# Compilar
+# Build
 cmake --build build/windows-release --config Release
 
-# Testes
+# Tests
 ctest --preset windows
 ```
 
-### Linux
+### Linux / macOS
 
 ```bash
-# Dar permissão ao script
+# Give execute permission
 chmod +x build.sh
 
-# Build Release
+# Release build
 ./build.sh Release
 
-# Build Debug com testes
+# Debug build with tests
 ./build.sh Debug --test
 ```
 
-### Linux (CMake Presets)
+### Linux / macOS (CMake Presets)
 
 ```bash
-# Configurar
-cmake --preset linux-release
+# Configure
+cmake --preset linux-release   # or macos-release / macos-arm64-release
 
-# Compilar
+# Build
 cmake --build build/linux-release
 
-# Testes
+# Tests
 ctest --preset linux
 ```
 
-### CMake Manual (Qualquer Plataforma)
+### Manual CMake (Any Platform)
 
 ```bash
 mkdir build && cd build
 
-# Com vcpkg toolchain
+# With vcpkg toolchain
 cmake .. -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake
 
-# Compilar
+# Build
 cmake --build . --config Release
 
-# Testes
+# Tests
 ctest --output-on-failure
 ```
 
-## CMake Presets Disponíveis
+## Available CMake Presets
 
-| Preset | Plataforma | Descrição |
-|--------|------------|-----------|
-| `linux-release` | Linux | Release com Ninja |
-| `linux-debug` | Linux | Debug com Ninja |
-| `windows-release` | Windows | Release com Visual Studio 2022 |
-| `windows-debug` | Windows | Debug com Visual Studio 2022 |
-| `windows-ninja` | Windows | Release com Ninja |
-| `windows-static` | Windows | Release com linking estático |
+| Preset | Platform | Description |
+|--------|----------|-------------|
+| `linux-release` | Linux x64 | Release with Ninja |
+| `linux-debug` | Linux x64 | Debug with Ninja |
+| `linux-arm64-release` | Linux ARM64 | Release with Ninja |
+| `linux-arm64-debug` | Linux ARM64 | Debug with Ninja |
+| `macos-release` | macOS x64 | Release with Ninja |
+| `macos-debug` | macOS x64 | Debug with Ninja |
+| `macos-arm64-release` | macOS ARM64 | Release with Ninja |
+| `macos-arm64-debug` | macOS ARM64 | Debug with Ninja |
+| `windows-release` | Windows x64 | Release with Visual Studio |
+| `windows-debug` | Windows x64 | Debug with Visual Studio |
+| `windows-ninja` | Windows x64 | Release with Ninja |
+| `windows-static` | Windows x64 | Release with static linking |
 
-## Execução
+## Running
 
 ```bash
-# Iniciar o broker
+# Start the broker
 ./event_horizon -p 9092 -d ./data
 
-# Com arquivo de configuração
+# With configuration file
 ./event_horizon -c config.json
 ```
 
 ## Kafka UI (Docker)
 
-Para visualizar e gerenciar o Event Horizon via interface web:
+To visualize and manage Event Horizon via web interface:
 
 ```bash
-# Subir o Kafka UI
+# Start Kafka UI
 docker-compose up -d
 
-# Acessar no navegador
+# Access in browser
 # http://localhost:8080
 
-# Parar
+# Stop
 docker-compose down
 ```
 
-**Nota:** O Event Horizon deve estar rodando antes de iniciar o Kafka UI.
+**Note:** Event Horizon must be running before starting Kafka UI.
 
-## Configuração
+## Configuration
 
-Edite o arquivo `config.json`:
+Edit the `config.json` file:
 
 ```json
 {
@@ -188,9 +202,9 @@ Edite o arquivo `config.json`:
 }
 ```
 
-## Testando com Cliente Kafka
+## Testing with Kafka Clients
 
-O Event Horizon é compatível com clientes Kafka padrão:
+Event Horizon is compatible with standard Kafka clients:
 
 ### Python (kafka-python)
 
@@ -223,44 +237,49 @@ producer.send(new ProducerRecord<>("my-topic", "key", "value"));
 ### CLI (kafkacat/kcat)
 
 ```bash
-# Produzir mensagem
+# Produce message
 echo "Hello" | kcat -P -b localhost:9092 -t my-topic
 
-# Consumir mensagens
+# Consume messages
 kcat -C -b localhost:9092 -t my-topic
 ```
 
-## Estrutura do Projeto
+## Project Structure
 
 ```
-mapC/
-├── CMakeList.txt           # Configuração do CMake
-├── CMakePresets.json       # Presets para Windows/Linux
-├── vcpkg.json              # Dependências vcpkg
-├── config.json             # Configuração exemplo
-├── build.ps1               # Script de build (Windows PowerShell)
-├── build.bat               # Script de build (Windows Batch)
-├── build.sh                # Script de build (Linux)
-├── README.md               # Este arquivo
-├── .gitignore              # Arquivos ignorados pelo Git
+eventhorizon/
+├── CMakeLists.txt          # CMake configuration
+├── CMakePresets.json       # Presets for Windows/Linux/macOS
+├── vcpkg.json              # vcpkg dependencies
+├── config.json             # Example configuration
+├── build.ps1               # Build script (Windows PowerShell)
+├── build.bat               # Build script (Windows Batch)
+├── build.sh                # Build script (Linux/macOS)
+├── README.md               # This file
+├── .gitignore              # Git ignored files
+├── .vscode/                # VS Code configuration
+│   ├── launch.json         # Debug configurations
+│   ├── tasks.json          # Build tasks
+│   ├── settings.json       # CMake settings
+│   └── c_cpp_properties.json # IntelliSense configuration
 ├── .github/
 │   └── workflows/
 │       └── build.yml       # CI/CD GitHub Actions
 └── src/
-    ├── main.cpp            # Ponto de entrada
+    ├── main.cpp            # Entry point
     ├── broker/
-    │   ├── broker.hpp      # Classe Broker
+    │   ├── broker.hpp      # Broker class
     │   └── broker.cpp
     ├── storage/
-    │   ├── log_segment.hpp # Segmento de log (disco)
+    │   ├── log_segment.hpp # Log segment (disk)
     │   ├── log_segment.cpp
-    │   ├── partition.hpp   # Partição de tópico
+    │   ├── partition.hpp   # Topic partition
     │   └── partition.cpp
     ├── protocol/
-    │   ├── kafka_protocol.hpp  # Protocolo Kafka
+    │   ├── kafka_protocol.hpp  # Kafka protocol
     │   └── kafka_protocol.cpp
     ├── network/
-    │   ├── server.hpp      # Servidor TCP
+    │   ├── server.hpp      # TCP server
     │   └── server.cpp
     └── tests/
         ├── test_log_segment.cpp
@@ -268,24 +287,24 @@ mapC/
         └── test_protocol.cpp
 ```
 
-## APIs Kafka Suportadas
+## Supported Kafka APIs
 
-| API | Status | Descrição |
-|-----|--------|-----------|
-| Produce (0) | ✅ | Publicar mensagens |
-| Fetch (1) | ✅ | Consumir mensagens |
-| ListOffsets (2) | ✅ | Listar offsets |
-| Metadata (3) | ✅ | Informações do cluster |
-| OffsetCommit (8) | ✅ | Commit de offset |
-| OffsetFetch (9) | ✅ | Buscar offset |
-| FindCoordinator (10) | ✅ | Encontrar coordinator |
-| JoinGroup (11) | ✅ | Entrar em grupo |
-| Heartbeat (12) | ✅ | Heartbeat do consumidor |
-| LeaveGroup (13) | ✅ | Sair do grupo |
-| SyncGroup (14) | ✅ | Sincronizar grupo |
-| ApiVersions (18) | ✅ | Negociação de versões |
+| API | Status | Description |
+|-----|--------|-------------|
+| Produce (0) | ✅ | Publish messages |
+| Fetch (1) | ✅ | Consume messages |
+| ListOffsets (2) | ✅ | List offsets |
+| Metadata (3) | ✅ | Cluster information |
+| OffsetCommit (8) | ✅ | Commit offset |
+| OffsetFetch (9) | ✅ | Fetch offset |
+| FindCoordinator (10) | ✅ | Find coordinator |
+| JoinGroup (11) | ✅ | Join consumer group |
+| Heartbeat (12) | ✅ | Consumer heartbeat |
+| LeaveGroup (13) | ✅ | Leave group |
+| SyncGroup (14) | ✅ | Sync group |
+| ApiVersions (18) | ✅ | Version negotiation |
 
-## Arquitetura
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -313,7 +332,7 @@ mapC/
 └─────────────────────────────────────────────────────────────┘
 ```
 
-## Testes
+## Tests
 
 ### Windows
 ```powershell
@@ -325,7 +344,7 @@ cd build/windows-release
 ctest --build-config Release --output-on-failure
 ```
 
-### Linux
+### Linux / macOS
 ```bash
 # Via script
 ./build.sh Release --test
@@ -335,32 +354,34 @@ cd build/linux-release
 ctest --output-on-failure
 ```
 
-## Binários Gerados
+## Generated Binaries
 
-Após a compilação, os binários estarão em:
+After building, binaries will be located at:
 
-| Plataforma | Caminho |
-|------------|---------|
+| Platform | Path |
+|----------|------|
 | Windows Release | `build/windows-release/Release/event_horizon.exe` |
 | Windows Debug | `build/windows-debug/Debug/event_horizon.exe` |
 | Linux Release | `build/linux-release/event_horizon` |
 | Linux Debug | `build/linux-debug/event_horizon` |
+| macOS Release | `build/macos-release/event_horizon` |
+| macOS ARM64 Release | `build/macos-arm64-release/event_horizon` |
 
 ## TODO / Roadmap
 
-- [ ] Replicação entre brokers
-- [ ] Compressão (gzip, snappy, lz4)
+- [ ] Broker replication
+- [ ] Compression (gzip, snappy, lz4)
 - [ ] Log compaction
 - [ ] Transactions
 - [ ] SASL/SSL authentication
 - [ ] Quotas
 - [ ] Admin API
 
-## Licença
+## License
 
 MIT License
 
-## Referências
+## References
 
 - [Apache Kafka Protocol Guide](https://kafka.apache.org/protocol)
 - [MapR Event Horizon Documentation](https://docs.datafabric.hpe.com/62/MapR_Streams/MapR_Streams.html)
