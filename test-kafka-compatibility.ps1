@@ -116,7 +116,7 @@ docker-compose -f $ComposeFile up -d kafka
 Write-Host "Aguardando Kafka inicializar..." -ForegroundColor Yellow
 $ready = $false
 for ($i = 0; $i -lt 30; $i++) {
-    $result = docker exec kafka-test kafka-broker-api-versions --bootstrap-server localhost:9092 2>&1
+    $null = docker exec kafka-test kafka-broker-api-versions --bootstrap-server localhost:9092 2>&1
     if ($LASTEXITCODE -eq 0) {
         $ready = $true
         break

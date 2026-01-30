@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.16)
 
+# Silenciar warning do FindBoost (removido no CMake 3.30+)
+cmake_policy(SET CMP0167 NEW)
+
 # ============================================================================
 # Versionamento
 # ============================================================================
@@ -44,7 +47,7 @@ option(BUILD_TESTS "Build test executables" ON)
 
 # Configurações de warning
 if(MSVC)
-    add_compile_options(/W4 /WX-)
+    add_compile_options(/W4 /WX- /utf-8)
 else()
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
