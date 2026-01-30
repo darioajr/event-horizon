@@ -5,7 +5,7 @@ cmake-build-*/
 
 # IDE
 .vs/
-.vscode/
+# .vscode/ - incluído no git para compartilhar configurações do projeto
 *.sln
 *.vcxproj
 *.vcxproj.*
