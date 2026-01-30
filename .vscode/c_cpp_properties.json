@@ -5,7 +5,11 @@
             "includePath": [
                 "${workspaceFolder}/src/**",
                 "${workspaceFolder}/src/includes/**",
-                "${workspaceFolder}/build/windows-debug/vcpkg_installed/x64-windows/include/**"
+                "${workspaceFolder}/build/windows-debug/vcpkg_installed/x64-windows/include/**",
+                "${workspaceFolder}/build/windows-release/_deps/googletest-src/googletest/include/**",
+                "${workspaceFolder}/build/windows-release/_deps/googletest-src/googlemock/include/**",
+                "${workspaceFolder}/build/windows-debug/_deps/googletest-src/googletest/include/**",
+                "${workspaceFolder}/build/windows-debug/_deps/googletest-src/googlemock/include/**"
             ],
             "defines": [
                 "_DEBUG",
