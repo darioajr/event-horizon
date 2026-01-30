@@ -1,4 +1,5 @@
 #include <iostream>
+#include <print>
 #include <csignal>
 #include <thread>
 #include <atomic>
@@ -12,7 +13,7 @@ std::atomic<bool> g_running{true};
 eventhorizon::Broker* g_broker = nullptr;
 
 void signal_handler(int signal) {
-    std::cout << "\nReceived signal " << signal << ", shutting down...\n";
+    std::println("\nReceived signal {}, shutting down...", signal);
     g_running = false;
     if (g_broker) {
         g_broker->stop();
@@ -20,7 +21,7 @@ void signal_handler(int signal) {
 }
 
 void print_banner() {
-    std::cout << R"(
+    std::println(R"(
  _____                _     _   _            _                
 |  ___|              | |   | | | |          (_)               
 | |____   _____ _ __ | |_  | |_| | ___  _ __ _ _______  _ __  
@@ -29,19 +30,18 @@ void print_banner() {
 \____/ \_/ \___|_| |_|\__| \_| |_/\___/|_|  |_/___\___/|_| |_|
 
 Kafka-Compatible Event Streaming Platform - v1.0.0
- )" << std::endl;
+)");
 }
 
 void print_usage(const char* program) {
-    std::cout << "Usage: " << program << " [options]\n"
-              << "\nOptions:\n"
-              << "  -c, --config <path>   Path to config file (default: config.json)\n"
-              << "  -p, --port <port>     Port to listen on (default: 9092)\n"
-              << "  -d, --data <dir>      Data directory (default: ./data)\n"
-              << "  -h, --help            Show this help message\n"
-              << "\nExample:\n"
-              << "  " << program << " -p 9092 -d /var/lib/eventhorizon\n"
-              << std::endl;
+    std::println("Usage: {} [options]", program);
+    std::println("\nOptions:");
+    std::println("  -c, --config <path>   Path to config file (default: config.json)");
+    std::println("  -p, --port <port>     Port to listen on (default: 9092)");
+    std::println("  -d, --data <dir>      Data directory (default: ./data)");
+    std::println("  -h, --help            Show this help message");
+    std::println("\nExample:");
+    std::println("  {} -p 9092 -d /var/lib/eventhorizon\n", program);
 }
 
 int main(int argc, char* argv[]) {
@@ -87,13 +87,12 @@ int main(int argc, char* argv[]) {
         // Salvar configuração
         config.save(config_path);
         
-        std::cout << "Configuration:\n"
-                  << "  Broker ID:    " << config.broker_id << "\n"
-                  << "  Host:         " << config.host << "\n"
-                  << "  Port:         " << config.port << "\n"
-                  << "  Data Dir:     " << config.log_dir << "\n"
-                  << "  Thread Pool:  " << config.thread_pool_size << "\n"
-                  << std::endl;
+        std::println("Configuration:");
+        std::println("  Broker ID:    {}", config.broker_id);
+        std::println("  Host:         {}", config.host);
+        std::println("  Port:         {}", config.port);
+        std::println("  Data Dir:     {}", config.log_dir);
+        std::println("  Thread Pool:  {}\n", config.thread_pool_size);
         
         // Criar e iniciar broker
         eventhorizon::Broker broker(config_path);
@@ -101,8 +100,8 @@ int main(int argc, char* argv[]) {
         
         broker.start();
         
-        std::cout << "\nEvent Horizon is ready to accept connections.\n"
-                  << "Press Ctrl+C to shutdown.\n" << std::endl;
+        std::println("\nEvent Horizon is ready to accept connections.");
+        std::println("Press Ctrl+C to shutdown.\n");
         
         // Loop principal - aguardar shutdown
         while (g_running) {
@@ -112,10 +111,10 @@ int main(int argc, char* argv[]) {
         g_broker = nullptr;
         
     } catch (const std::exception& e) {
-        std::cerr << "Fatal error: " << e.what() << std::endl;
+        std::println(stderr, "Fatal error: {}", e.what());
         return 1;
     }
     
-    std::cout << "Goodbye!\n";
+    std::println("Goodbye!");
     return 0;
 }
