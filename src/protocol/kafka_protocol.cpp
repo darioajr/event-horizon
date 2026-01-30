@@ -1990,6 +1990,8 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_create_partitions(
 std::vector<uint8_t> KafkaProtocolHandler::handle_describe_log_dirs(
     const RequestHeader& header, BufferReader& /*reader*/) {
     
+    std::cout << "DescribeLogDirs v" << header.api_version << " request\n";
+    
     // DescribeLogDirs v2+ uses flexible format
     bool flexible = (header.api_version >= 2);
     
@@ -2029,6 +2031,8 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_describe_log_dirs(
             total_bytes += topic.num_partitions * 1024;  // 1KB fallback per partition
         }
     }
+    
+    std::cout << "  Topics: " << topics.size() << ", total_bytes: " << total_bytes << "\n";
     
     // Results array - one log directory
     if (flexible) {
@@ -2104,12 +2108,11 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_describe_log_dirs(
         }
     }
     
-    // total_bytes (v4+)
+    // total_bytes and usable_bytes are part of the log_dir result (v4+)
+    // These come AFTER the topics array but BEFORE the log_dir tagged fields
     if (header.api_version >= 4) {
-        writer.write_int64(total_bytes);
-        
-        // usable_bytes (v4+)
-        writer.write_int64(total_bytes * 10);  // Assume 10x available space
+        writer.write_int64(total_bytes);         // total_bytes
+        writer.write_int64(total_bytes * 10);    // usable_bytes - assume 10x available
     }
     
     // Tagged fields for log_dir (flexible)

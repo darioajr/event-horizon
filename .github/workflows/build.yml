@@ -16,7 +16,7 @@ jobs:
   # Linux x64 Build
   # ==========================================================================
   build-linux-x64:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     
     steps:
     - uses: actions/checkout@v4
@@ -24,7 +24,9 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y ninja-build
+        sudo apt-get install -y ninja-build gcc-14 g++-14
+        sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100
+        sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 100
     
     - name: Setup vcpkg
       uses: lukka/run-vcpkg@v11
@@ -71,7 +73,9 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y ninja-build
+        sudo apt-get install -y ninja-build gcc-14 g++-14
+        sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 100
+        sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-14 100
     
     - name: Setup vcpkg
       uses: lukka/run-vcpkg@v11
@@ -205,6 +209,11 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
+    - name: Setup MSVC
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
+    
     - name: Setup vcpkg
       uses: lukka/run-vcpkg@v11
       with:
@@ -222,7 +231,7 @@ jobs:
           vcpkg-windows-x64-
     
     - name: Configure CMake
-      run: cmake --preset windows-ninja
+      run: cmake --preset windows-ninja -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl
     
     - name: Build
       run: cmake --build build/windows-ninja --config ${{ env.BUILD_TYPE }}
@@ -247,6 +256,11 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
+    - name: Setup MSVC
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
+    
     - name: Setup vcpkg
       uses: lukka/run-vcpkg@v11
       with:
@@ -264,7 +278,7 @@ jobs:
           vcpkg-windows-static-
     
     - name: Configure CMake (Static)
-      run: cmake --preset windows-ninja-static
+      run: cmake --preset windows-ninja-static -DCMAKE_C_COMPILER=cl -DCMAKE_CXX_COMPILER=cl
     
     - name: Build
       run: cmake --build build/windows-ninja-static --config ${{ env.BUILD_TYPE }}

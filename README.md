@@ -379,7 +379,7 @@ After building, binaries will be located at:
 
 ## License
 
-MIT License
+Apache 2.0 License
 
 ## References
 
