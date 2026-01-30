@@ -69,6 +69,7 @@ add_library(eventhorizon_lib STATIC
     src/protocol/kafka_protocol.cpp
     src/network/server.cpp
     src/broker/broker.cpp
+    src/consumer/consumer_group.cpp
 )
 
 # Definir versão como macros de compilação
@@ -128,6 +129,8 @@ if(BUILD_TESTS)
         src/tests/test_log_segment.cpp
         src/tests/test_partition.cpp
         src/tests/test_protocol.cpp
+        src/tests/test_consumer_group.cpp
+        src/tests/test_broker.cpp
     )
     
     target_link_libraries(eventhorizon_tests PRIVATE

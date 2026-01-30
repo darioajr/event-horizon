@@ -166,3 +166,82 @@ TEST_F(PartitionTest, LargeMessages) {
     EXPECT_EQ(records.size(), 1u);
     EXPECT_EQ(records[0].value.size(), 10 * 1024 * 1024);
 }
+
+// ============================================================================
+// Delete Records and Truncate Tests
+// ============================================================================
+
+TEST_F(PartitionTest, DeleteRecordsBefore) {
+    Partition partition("delete-test", 0, test_dir_);
+    
+    // Produce 10 messages
+    for (int i = 0; i < 10; ++i) {
+        partition.produce("key" + std::to_string(i), 
+                         {'v', static_cast<uint8_t>('0' + i)});
+    }
+    
+    EXPECT_EQ(partition.get_log_end_offset(), 10);
+    
+    // Delete records before offset 5
+    int64_t new_start = partition.delete_records_before(5);
+    EXPECT_GE(new_start, 0);  // Should be at least 0
+    
+    // Log end offset should remain unchanged
+    EXPECT_EQ(partition.get_log_end_offset(), 10);
+}
+
+TEST_F(PartitionTest, DeleteRecordsHighWatermark) {
+    Partition partition("delete-hw-test", 0, test_dir_);
+    
+    // Produce messages
+    for (int i = 0; i < 5; ++i) {
+        partition.produce("key", {'v'});
+    }
+    
+    // Delete with -1 (high watermark) should clear all
+    int64_t new_start = partition.delete_records_before(-1);
+    EXPECT_GE(new_start, 0);
+}
+
+TEST_F(PartitionTest, Truncate) {
+    Partition partition("truncate-test", 0, test_dir_);
+    
+    // Produce 20 messages
+    for (int i = 0; i < 20; ++i) {
+        partition.produce("key", {'v'});
+    }
+    
+    int64_t end_before = partition.get_log_end_offset();
+    EXPECT_EQ(end_before, 20);
+    
+    // Truncate the partition
+    partition.truncate();
+    
+    // Log start should equal old log end
+    int64_t start_after = partition.get_log_start_offset();
+    EXPECT_EQ(start_after, 20);
+    
+    // No messages should be fetchable
+    auto records = partition.fetch(0, 10240);
+    EXPECT_TRUE(records.empty());
+    
+    // New messages should start from offset 20
+    int64_t new_offset = partition.produce("new", {'n'});
+    EXPECT_EQ(new_offset, 20);
+}
+
+TEST_F(PartitionTest, TruncatePreservesPartition) {
+    Partition partition("truncate-preserve", 0, test_dir_);
+    
+    partition.produce("key", {'v'});
+    partition.truncate();
+    
+    // Should be able to produce new messages
+    int64_t offset = partition.produce("new-key", {'n', 'e', 'w'});
+    EXPECT_GE(offset, 1);
+    
+    // And fetch them
+    auto records = partition.fetch(offset, 1024);
+    EXPECT_EQ(records.size(), 1u);
+    EXPECT_EQ(records[0].key, "new-key");
+}

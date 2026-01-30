@@ -10,6 +10,10 @@
 #include <mutex>
 
 namespace eventhorizon {
+
+// Forward declaration
+class ConsumerGroupManager;
+
 namespace protocol {
 
 // ============================================================================
@@ -336,6 +340,11 @@ public:
     
     void set_topics_callback(TopicsCallback callback);
     void set_groups_callback(GroupsCallback callback);
+    
+    /**
+     * @brief Define o gerenciador de consumer groups
+     */
+    void set_consumer_group_manager(ConsumerGroupManager* manager);
 
 private:
     // Handlers built-in
@@ -373,6 +382,8 @@ private:
                                                BufferReader& reader);
     std::vector<uint8_t> handle_delete_topics(const RequestHeader& header, 
                                                BufferReader& reader);
+    std::vector<uint8_t> handle_delete_records(const RequestHeader& header, 
+                                                BufferReader& reader);
     std::vector<uint8_t> handle_init_producer_id(const RequestHeader& header, 
                                                   BufferReader& reader);
     std::vector<uint8_t> handle_create_partitions(const RequestHeader& header, 
@@ -398,6 +409,9 @@ private:
     TopicsCallback topics_callback_;
     GroupsCallback groups_callback_;
     
+    // Consumer Group Manager (ponteiro não-owning)
+    ConsumerGroupManager* consumer_group_manager_ = nullptr;
+    
     // Stored topics (created via CreateTopics API)
     std::vector<TopicInfo> stored_topics_;
     mutable std::mutex topics_mutex_;
@@ -405,8 +419,10 @@ private:
 public:
     // Add a topic to storage
     void add_topic(const TopicInfo& topic);
+    // Remove a topic from storage
+    void remove_topic(std::string_view topic_name);
     // Get all stored topics
-    std::vector<TopicInfo> get_stored_topics() const;
+    [[nodiscard]] std::vector<TopicInfo> get_stored_topics() const;
 };
 
 // ============================================================================

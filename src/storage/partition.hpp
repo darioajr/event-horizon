@@ -86,8 +86,15 @@ public:
     
     /**
      * @brief Remove records antes de um offset (log compaction)
+     * @return O novo log_start_offset após a operação
      */
-    void delete_records_before(int64_t offset);
+    int64_t delete_records_before(int64_t offset);
+    
+    /**
+     * @brief Trunca completamente a partição (remove todas as mensagens)
+     * Usado pelo Kafka UI "Clear Messages"
+     */
+    void truncate();
 
 private:
     void load_segments();

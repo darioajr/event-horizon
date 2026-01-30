@@ -102,7 +102,14 @@ jobs:
     
     - name: Test
       working-directory: build/linux-release
-      run: ctest --build-config ${{ env.BUILD_TYPE }} --output-on-failure
+      run: |
+        ctest --build-config ${{ env.BUILD_TYPE }} --output-on-failure --verbose
+        # Verify minimum test count (should have 127+ tests)
+        TEST_COUNT=$(ctest -N | grep -oP 'Total Tests: \K\d+' || echo "0")
+        echo "::notice::Total tests: $TEST_COUNT"
+        if [ "$TEST_COUNT" -lt 120 ]; then
+          echo "::warning::Expected at least 120 tests, got $TEST_COUNT"
+        fi
     
     - name: Upload artifact
       uses: actions/upload-artifact@v4
@@ -155,7 +162,10 @@ jobs:
     
     - name: Test
       working-directory: build/linux-arm64-release
-      run: ctest --build-config ${{ env.BUILD_TYPE }} --output-on-failure
+      run: |
+        ctest --build-config ${{ env.BUILD_TYPE }} --output-on-failure --verbose
+        TEST_COUNT=$(ctest -N | grep -oP 'Total Tests: \K\d+' || echo "0")
+        echo "::notice::Total tests: $TEST_COUNT"
     
     - name: Upload artifact
       uses: actions/upload-artifact@v4
@@ -204,7 +214,10 @@ jobs:
     
     - name: Test
       working-directory: build/macos-release
-      run: ctest --build-config ${{ env.BUILD_TYPE }} --output-on-failure
+      run: |
+        ctest --build-config ${{ env.BUILD_TYPE }} --output-on-failure --verbose
+        TEST_COUNT=$(ctest -N | grep -E 'Total Tests:' | awk '{print $3}' || echo "0")
+        echo "::notice::Total tests: $TEST_COUNT"
     
     - name: Upload artifact
       uses: actions/upload-artifact@v4
@@ -253,7 +266,10 @@ jobs:
     
     - name: Test
       working-directory: build/macos-arm64-release
-      run: ctest --build-config ${{ env.BUILD_TYPE }} --output-on-failure
+      run: |
+        ctest --build-config ${{ env.BUILD_TYPE }} --output-on-failure --verbose
+        TEST_COUNT=$(ctest -N | grep -E 'Total Tests:' | awk '{print $3}' || echo "0")
+        echo "::notice::Total tests: $TEST_COUNT"
     
     - name: Upload artifact
       uses: actions/upload-artifact@v4
@@ -306,7 +322,11 @@ jobs:
     
     - name: Test
       working-directory: build/windows-ninja
-      run: ctest --build-config ${{ env.BUILD_TYPE }} --output-on-failure
+      run: |
+        ctest --build-config ${{ env.BUILD_TYPE }} --output-on-failure --verbose
+        $testOutput = ctest -N
+        $testCount = ($testOutput | Select-String -Pattern 'Total Tests: (\d+)').Matches.Groups[1].Value
+        Write-Host "::notice::Total tests: $testCount"
     
     - name: Prepare distribution
       run: |
@@ -366,6 +386,14 @@ jobs:
     
     - name: Build
       run: cmake --build build/windows-ninja-static --config ${{ env.BUILD_TYPE }}
+    
+    - name: Test
+      working-directory: build/windows-ninja-static
+      run: |
+        ctest --build-config ${{ env.BUILD_TYPE }} --output-on-failure --verbose
+        $testOutput = ctest -N
+        $testCount = ($testOutput | Select-String -Pattern 'Total Tests: (\d+)').Matches.Groups[1].Value
+        Write-Host "::notice::Total tests: $testCount"
     
     - name: Upload artifact
       uses: actions/upload-artifact@v4

@@ -6,6 +6,7 @@
 #include <fstream>
 #include <set>
 #include <algorithm>
+#include <ranges>  // C++23
 #include <nlohmann/json.hpp>
 
 namespace fs = std::filesystem;
@@ -139,6 +140,7 @@ Broker::Broker(const std::string& config_path)
     protocol_handler_ = std::make_unique<protocol::KafkaProtocolHandler>();
     protocol_handler_->set_broker_info(config_.broker_id, config_.host, config_.port);
     protocol_handler_->set_cluster_id(config_.cluster_id);
+    protocol_handler_->set_consumer_group_manager(&consumer_group_manager_);
     
     // Configurar versão do broker
     protocol::BrokerVersion version;
@@ -176,16 +178,27 @@ Broker::Broker(const std::string& config_path)
     // Configurar callback para obter consumer groups
     protocol_handler_->set_groups_callback([this]() {
         std::vector<protocol::ConsumerGroupInfo> groups;
-        std::shared_lock<std::shared_mutex> lock(groups_mutex_);
         
-        for (const auto& [group_id, group] : consumer_groups_) {
-            groups.push_back(group);
+        for (const auto& desc : consumer_group_manager_.list_groups()) {
+            protocol::ConsumerGroupInfo info;
+            info.group_id = desc.group_id;
+            info.protocol_type = desc.protocol_type;
+            info.state = desc.state;
+            for (const auto& member : desc.members) {
+                info.members.push_back(member.member_id);
+            }
+            groups.push_back(info);
         }
         return groups;
     });
     
     // Registrar handlers customizados para Produce e Fetch
     register_protocol_handlers();
+    
+    // Iniciar thread de expiração de sessões
+    session_expiration_thread_ = std::jthread([this](std::stop_token token) {
+        session_expiration_loop(token);
+    });
     
     // Carregar tópicos existentes
     load_topics();
@@ -290,6 +303,12 @@ void Broker::stop() {
     
     std::cout << "Stopping broker...\n";
     
+    // Parar thread de expiração de sessões
+    if (session_expiration_thread_.joinable()) {
+        session_expiration_thread_.request_stop();
+        session_expiration_thread_.join();
+    }
+    
     // Parar servidor
     if (server_) {
         server_->stop();
@@ -306,6 +325,23 @@ void Broker::stop() {
     }
     
     std::cout << "Broker stopped\n";
+}
+
+void Broker::session_expiration_loop(std::stop_token stop_token) {
+    while (!stop_token.stop_requested()) {
+        // Verificar a cada 1 segundo
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+        
+        if (stop_token.stop_requested()) {
+            break;
+        }
+        
+        // Expirar sessões
+        consumer_group_manager_.expire_sessions();
+        
+        // Limpar grupos vazios (a cada execução - a função tem throttle interno)
+        consumer_group_manager_.cleanup_empty_groups();
+    }
 }
 
 void Broker::create_topic(const std::string& name, int32_t num_partitions, 
@@ -330,8 +366,8 @@ void Broker::create_topic(const std::string& name, int32_t num_partitions,
               << " with " << num_partitions << " partitions\n";
 }
 
-void Broker::delete_topic(const std::string& name) {
-    std::unique_lock<std::shared_mutex> lock(topics_mutex_);
+void Broker::delete_topic(const std::string& name, bool purge_data) {
+    std::unique_lock lock(topics_mutex_);  // C++23 CTAD
     
     auto it = topics_.find(name);
     if (it == topics_.end()) {
@@ -341,14 +377,77 @@ void Broker::delete_topic(const std::string& name) {
     // Remover do mapa (destrutor vai limpar recursos)
     topics_.erase(it);
     
-    // Remover diretórios (opcional - deixar como cleanup)
-    // for (const auto& entry : fs::directory_iterator(config_.log_dir)) {
-    //     if (entry.path().filename().string().find(name + "-") == 0) {
-    //         fs::remove_all(entry.path());
-    //     }
-    // }
+    // Remover diretórios físicos se solicitado
+    if (purge_data) {
+        for (const auto& entry : fs::directory_iterator(config_.log_dir)) {
+            std::string dirname = entry.path().filename().string();
+            // Match topic-N pattern (e.g., "my-topic-0", "my-topic-1")
+            if (dirname.starts_with(name + "-")) {
+                // Verificar se o sufixo é um número (partition id)
+                std::string suffix = dirname.substr(name.size() + 1);
+                if (!suffix.empty() && std::ranges::all_of(suffix, ::isdigit)) {
+                    fs::remove_all(entry.path());
+                    std::cout << "Removed partition directory: " << entry.path() << "\n";
+                }
+            }
+        }
+    }
     
     std::cout << "Deleted topic: " << name << "\n";
+}
+
+void Broker::recreate_topic(const std::string& name) {
+    int32_t num_partitions;
+    int16_t replication_factor;
+    
+    // Primeiro, obter configuração atual
+    {
+        std::shared_lock lock(topics_mutex_);  // C++23 CTAD
+        auto it = topics_.find(name);
+        if (it == topics_.end()) {
+            throw std::runtime_error("Topic not found: " + name);
+        }
+        num_partitions = static_cast<int32_t>(it->second.size());
+        replication_factor = 1;  // TODO: obter do tópico quando suportarmos replicação
+    }
+    
+    // Deletar com purge
+    delete_topic(name, true);
+    
+    // Recriar
+    create_topic(name, num_partitions, replication_factor);
+    
+    std::cout << "Recreated topic: " << name << "\n";
+}
+
+int64_t Broker::delete_records(const std::string& topic, int32_t partition_id, int64_t offset) {
+    std::shared_lock lock(topics_mutex_);  // C++23 CTAD
+    
+    auto it = topics_.find(topic);
+    if (it == topics_.end()) {
+        throw std::runtime_error("Topic not found: " + topic);
+    }
+    
+    if (partition_id < 0 || partition_id >= static_cast<int32_t>(it->second.size())) {
+        throw std::runtime_error("Invalid partition: " + std::to_string(partition_id));
+    }
+    
+    return it->second[partition_id]->delete_records_before(offset);
+}
+
+void Broker::clear_topic_messages(const std::string& name) {
+    std::shared_lock lock(topics_mutex_);  // C++23 CTAD
+    
+    auto it = topics_.find(name);
+    if (it == topics_.end()) {
+        throw std::runtime_error("Topic not found: " + name);
+    }
+    
+    for (auto& partition : it->second) {
+        partition->truncate();
+    }
+    
+    std::cout << "Cleared all messages from topic: " << name << "\n";
 }
 
 std::vector<std::string> Broker::list_topics() const {

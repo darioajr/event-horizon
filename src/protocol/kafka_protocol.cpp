@@ -1,9 +1,11 @@
 #include "kafka_protocol.hpp"
+#include "../consumer/consumer_group.hpp"
 #include <stdexcept>
 #include <cstring>
 #include <chrono>
 #include <iostream>
 #include <atomic>
+#include <print>
 
 namespace eventhorizon {
 namespace protocol {
@@ -492,6 +494,7 @@ KafkaProtocolHandler::KafkaProtocolHandler() {
         {ApiKey::ApiVersions, 3, 4},       // v3+ flexible, v4 max in 4.1
         {ApiKey::CreateTopics, 5, 7},      // v5+ flexible, v7 max in 4.1
         {ApiKey::DeleteTopics, 4, 6},      // v4+ flexible, v6 max in 4.1
+        {ApiKey::DeleteRecords, 1, 2},      // v1+ flexible, v2 max in 4.1
         {ApiKey::DescribeConfigs, 4, 4},   // v4 flexible, v4 max in 4.1
         {ApiKey::InitProducerId, 4, 5},    // v4+ flexible, v5 max in 4.1
         {ApiKey::CreatePartitions, 2, 3},  // v2+ flexible, v3 max in 4.1
@@ -528,20 +531,31 @@ void KafkaProtocolHandler::set_groups_callback(GroupsCallback callback) {
     groups_callback_ = std::move(callback);
 }
 
+void KafkaProtocolHandler::set_consumer_group_manager(ConsumerGroupManager* manager) {
+    consumer_group_manager_ = manager;
+}
+
 void KafkaProtocolHandler::add_topic(const TopicInfo& topic) {
-    std::lock_guard<std::mutex> lock(topics_mutex_);
-    // Check if topic already exists
-    for (auto& t : stored_topics_) {
-        if (t.name == topic.name) {
-            t = topic; // Update existing
-            return;
-        }
+    std::lock_guard lock(topics_mutex_);
+    // C++23: Use ranges to find existing topic
+    if (auto it = std::ranges::find(stored_topics_, topic.name, &TopicInfo::name);
+        it != stored_topics_.end()) {
+        *it = topic; // Update existing
+        return;
     }
     stored_topics_.push_back(topic);
 }
 
+void KafkaProtocolHandler::remove_topic(std::string_view topic_name) {
+    std::lock_guard lock(topics_mutex_);
+    // C++23: Use std::erase_if with ranges projection
+    std::erase_if(stored_topics_, [topic_name](const TopicInfo& t) {
+        return t.name == topic_name;
+    });
+}
+
 std::vector<TopicInfo> KafkaProtocolHandler::get_stored_topics() const {
-    std::lock_guard<std::mutex> lock(topics_mutex_);
+    std::lock_guard lock(topics_mutex_);
     return stored_topics_;
 }
 
@@ -604,6 +618,8 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_request(
                 return handle_create_topics(header, reader);
             case ApiKey::DeleteTopics:
                 return handle_delete_topics(header, reader);
+            case ApiKey::DeleteRecords:
+                return handle_delete_records(header, reader);
             case ApiKey::InitProducerId:
                 return handle_init_producer_id(header, reader);
             case ApiKey::CreatePartitions:
@@ -1079,8 +1095,37 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_find_coordinator(
 std::vector<uint8_t> KafkaProtocolHandler::handle_join_group(
     const RequestHeader& header, BufferReader& reader) {
     
+    // Parse JoinGroup request
     std::string group_id = reader.read_string();
-    int32_t session_timeout = reader.read_int32();
+    int32_t session_timeout_ms = reader.read_int32();
+    int32_t rebalance_timeout_ms = session_timeout_ms;
+    if (header.api_version >= 1) {
+        rebalance_timeout_ms = reader.read_int32();
+    }
+    std::string member_id = reader.read_string();
+    
+    std::optional<std::string_view> group_instance_id;
+    std::string group_instance_id_str;
+    if (header.api_version >= 5) {
+        group_instance_id_str = reader.read_nullable_string();
+        if (!group_instance_id_str.empty()) {
+            group_instance_id = group_instance_id_str;
+        }
+    }
+    
+    std::string protocol_type = reader.read_string();
+    
+    // Read protocols
+    int32_t protocol_count = reader.read_int32();
+    std::vector<std::pair<std::string, std::vector<uint8_t>>> protocols;
+    for (int32_t i = 0; i < protocol_count; ++i) {
+        std::string name = reader.read_string();
+        std::vector<uint8_t> metadata = reader.read_bytes();
+        protocols.emplace_back(std::move(name), std::move(metadata));
+    }
+    
+    std::println("JoinGroup: group={}, member={}, protocol_type={}, protocols={}",
+        group_id, member_id, protocol_type, protocol_count);
     
     BufferWriter writer;
     writer.write_int32(header.correlation_id);
@@ -1090,39 +1135,114 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_join_group(
         writer.write_int32(0);
     }
     
-    // Error code
-    writer.write_int16(static_cast<int16_t>(ErrorCode::None));
+    // Se não temos consumer group manager, retornar erro
+    if (!consumer_group_manager_) {
+        writer.write_int16(static_cast<int16_t>(ErrorCode::CoordinatorNotAvailable));
+        writer.write_int32(-1); // generation_id
+        if (header.api_version >= 7) {
+            writer.write_nullable_string(nullptr); // protocol_type
+        }
+        writer.write_string(""); // protocol_name
+        writer.write_string(""); // leader
+        writer.write_string(""); // member_id
+        writer.write_int32(0); // empty members
+        return writer.data();
+    }
     
-    // Generation ID
-    writer.write_int32(1);
+    // Obter ou criar grupo
+    auto* group = consumer_group_manager_->get_or_create_group(group_id);
+    
+    // Executar join
+    auto result = group->join(
+        member_id,
+        group_instance_id,
+        header.client_id,
+        broker_host_,  // client_host - usamos o broker por simplificação
+        protocol_type,
+        protocols,
+        session_timeout_ms,
+        rebalance_timeout_ms
+    );
+    
+    // Escrever resposta
+    writer.write_int16(result.error_code);
+    writer.write_int32(result.generation_id);
     
     // Protocol type (v7+)
     if (header.api_version >= 7) {
-        writer.write_nullable_string(nullptr);
+        if (result.error_code == 0) {
+            writer.write_nullable_string(&protocol_type);
+        } else {
+            writer.write_nullable_string(nullptr);
+        }
     }
     
-    // Protocol name
-    writer.write_string("range");
+    writer.write_string(result.protocol_name);
+    writer.write_string(result.leader_id);
+    writer.write_string(result.member_id);
     
-    // Leader
-    writer.write_string("member-1");
-    
-    // Member ID
-    writer.write_string("member-1");
-    
-    // Members array
-    writer.write_int32(1);
-    writer.write_string("member-1");
-    if (header.api_version >= 5) {
-        writer.write_nullable_string(nullptr); // group_instance_id
+    // Members array - só para o leader
+    writer.write_int32(static_cast<int32_t>(result.members.size()));
+    for (const auto* member : result.members) {
+        writer.write_string(member->member_id);
+        if (header.api_version >= 5) {
+            if (member->group_instance_id.has_value()) {
+                std::string gid = *member->group_instance_id;
+                writer.write_nullable_string(&gid);
+            } else {
+                writer.write_nullable_string(nullptr);
+            }
+        }
+        // Encontrar o metadata do protocolo selecionado
+        std::vector<uint8_t> metadata;
+        for (const auto& [name, data] : member->supported_protocols) {
+            if (name == result.protocol_name) {
+                metadata = data;
+                break;
+            }
+        }
+        writer.write_bytes(metadata);
     }
-    writer.write_bytes({}); // metadata
     
     return writer.data();
 }
 
 std::vector<uint8_t> KafkaProtocolHandler::handle_sync_group(
-    const RequestHeader& header, BufferReader& /*reader*/) {
+    const RequestHeader& header, BufferReader& reader) {
+    
+    // Parse SyncGroup request
+    std::string group_id = reader.read_string();
+    int32_t generation_id = reader.read_int32();
+    std::string member_id = reader.read_string();
+    
+    // group_instance_id (v3+)
+    if (header.api_version >= 3) {
+        reader.read_nullable_string(); // ignore for now
+    }
+    
+    // Protocol type (v5+)
+    std::string protocol_type;
+    if (header.api_version >= 5) {
+        protocol_type = reader.read_nullable_string();
+    }
+    
+    // Protocol name (v5+)
+    std::string protocol_name;
+    if (header.api_version >= 5) {
+        protocol_name = reader.read_nullable_string();
+    }
+    
+    // Read assignments (only leader sends these)
+    int32_t assignment_count = reader.read_int32();
+    std::vector<std::pair<std::string, std::vector<uint8_t>>> assignments;
+    for (int32_t i = 0; i < assignment_count; ++i) {
+        std::string mid = reader.read_string();
+        std::vector<uint8_t> assignment = reader.read_bytes();
+        assignments.emplace_back(std::move(mid), std::move(assignment));
+    }
+    
+    std::println("SyncGroup: group={}, member={}, gen={}, assignments={}",
+        group_id, member_id, generation_id, assignment_count);
     
     BufferWriter writer;
     writer.write_int32(header.correlation_id);
@@ -1132,27 +1252,64 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_sync_group(
         writer.write_int32(0);
     }
     
-    // Error code
-    writer.write_int16(static_cast<int16_t>(ErrorCode::None));
-    
-    // Protocol type (v5+)
-    if (header.api_version >= 5) {
-        writer.write_nullable_string(nullptr);
+    // Se não temos consumer group manager, retornar erro
+    if (!consumer_group_manager_) {
+        writer.write_int16(static_cast<int16_t>(ErrorCode::CoordinatorNotAvailable));
+        if (header.api_version >= 5) {
+            writer.write_nullable_string(nullptr); // protocol_type
+            writer.write_nullable_string(nullptr); // protocol_name
+        }
+        writer.write_bytes({}); // empty assignment
+        return writer.data();
     }
     
-    // Protocol name (v5+)
-    if (header.api_version >= 5) {
-        writer.write_nullable_string(nullptr);
+    // Obter grupo
+    auto* group = consumer_group_manager_->get_group(group_id);
+    if (!group) {
+        writer.write_int16(static_cast<int16_t>(ErrorCode::InvalidGroupId));
+        if (header.api_version >= 5) {
+            writer.write_nullable_string(nullptr);
+            writer.write_nullable_string(nullptr);
+        }
+        writer.write_bytes({});
+        return writer.data();
     }
     
-    // Assignment
-    writer.write_bytes({});
+    // Executar sync
+    auto result = group->sync(member_id, generation_id, assignments);
+    
+    writer.write_int16(result.error_code);
+    
+    // Protocol type/name (v5+)
+    if (header.api_version >= 5) {
+        if (result.error_code == 0) {
+            std::string pt{group->protocol_type()};
+            std::string pn{group->protocol_name()};
+            writer.write_nullable_string(&pt);
+            writer.write_nullable_string(&pn);
+        } else {
+            writer.write_nullable_string(nullptr);
+            writer.write_nullable_string(nullptr);
+        }
+    }
+    
+    writer.write_bytes(result.assignment);
     
     return writer.data();
 }
 
 std::vector<uint8_t> KafkaProtocolHandler::handle_heartbeat(
-    const RequestHeader& header, BufferReader& /*reader*/) {
+    const RequestHeader& header, BufferReader& reader) {
+    
+    // Parse Heartbeat request
+    std::string group_id = reader.read_string();
+    int32_t generation_id = reader.read_int32();
+    std::string member_id = reader.read_string();
+    
+    // group_instance_id (v3+)
+    if (header.api_version >= 3) {
+        reader.read_nullable_string();
+    }
     
     BufferWriter writer;
     writer.write_int32(header.correlation_id);
@@ -1162,14 +1319,51 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_heartbeat(
         writer.write_int32(0);
     }
     
-    // Error code
-    writer.write_int16(static_cast<int16_t>(ErrorCode::None));
+    // Processar heartbeat
+    int16_t error_code = 0;
+    if (consumer_group_manager_) {
+        auto* group = consumer_group_manager_->get_group(group_id);
+        if (group) {
+            error_code = group->heartbeat(member_id, generation_id);
+        } else {
+            error_code = static_cast<int16_t>(ErrorCode::InvalidGroupId);
+        }
+    } else {
+        error_code = static_cast<int16_t>(ErrorCode::CoordinatorNotAvailable);
+    }
+    
+    writer.write_int16(error_code);
     
     return writer.data();
 }
 
 std::vector<uint8_t> KafkaProtocolHandler::handle_leave_group(
-    const RequestHeader& header, BufferReader& /*reader*/) {
+    const RequestHeader& header, BufferReader& reader) {
+    
+    // Parse LeaveGroup request
+    std::string group_id = reader.read_string();
+    
+    // v0-v2: single member_id
+    // v3+: members array
+    std::vector<std::pair<std::string, std::optional<std::string>>> members_to_leave;
+    
+    if (header.api_version >= 3) {
+        int32_t member_count = reader.read_int32();
+        for (int32_t i = 0; i < member_count; ++i) {
+            std::string member_id = reader.read_string();
+            std::string group_instance_id = reader.read_nullable_string();
+            std::optional<std::string> instance_id;
+            if (!group_instance_id.empty()) {
+                instance_id = group_instance_id;
+            }
+            members_to_leave.emplace_back(member_id, instance_id);
+        }
+    } else {
+        std::string member_id = reader.read_string();
+        members_to_leave.emplace_back(member_id, std::nullopt);
+    }
+    
+    std::println("LeaveGroup: group={}, members={}", group_id, members_to_leave.size());
     
     BufferWriter writer;
     writer.write_int32(header.correlation_id);
@@ -1179,19 +1373,76 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_leave_group(
         writer.write_int32(0);
     }
     
-    // Error code
-    writer.write_int16(static_cast<int16_t>(ErrorCode::None));
+    // Processar leave
+    int16_t error_code = 0;
+    std::vector<std::pair<std::string, int16_t>> member_responses;
+    
+    if (consumer_group_manager_) {
+        auto* group = consumer_group_manager_->get_group(group_id);
+        if (group) {
+            for (const auto& [member_id, instance_id] : members_to_leave) {
+                if (instance_id.has_value()) {
+                    group->leave_by_instance_id(*instance_id);
+                } else {
+                    group->leave(member_id);
+                }
+                member_responses.emplace_back(member_id, 0);
+            }
+        } else {
+            error_code = static_cast<int16_t>(ErrorCode::InvalidGroupId);
+            for (const auto& [member_id, _] : members_to_leave) {
+                member_responses.emplace_back(member_id, error_code);
+            }
+        }
+    } else {
+        error_code = static_cast<int16_t>(ErrorCode::CoordinatorNotAvailable);
+    }
+    
+    writer.write_int16(error_code);
     
     // Members (v3+)
     if (header.api_version >= 3) {
-        writer.write_int32(0); // empty members array
+        writer.write_int32(static_cast<int32_t>(member_responses.size()));
+        for (const auto& [member_id, member_error] : member_responses) {
+            writer.write_string(member_id);
+            if (header.api_version >= 4) {
+                writer.write_nullable_string(nullptr); // group_instance_id
+            }
+            writer.write_int16(member_error);
+        }
     }
     
     return writer.data();
 }
 
 std::vector<uint8_t> KafkaProtocolHandler::handle_offset_fetch(
-    const RequestHeader& header, BufferReader& /*reader*/) {
+    const RequestHeader& header, BufferReader& reader) {
+    
+    // Parse OffsetFetch request
+    std::string group_id = reader.read_string();
+    
+    // Parse topics to fetch offsets for
+    struct TopicPartitionRequest {
+        std::string topic;
+        std::vector<int32_t> partitions;
+    };
+    std::vector<TopicPartitionRequest> topics_to_fetch;
+    
+    int32_t topic_count = reader.read_int32();
+    if (topic_count >= 0) {
+        for (int32_t i = 0; i < topic_count; ++i) {
+            TopicPartitionRequest req;
+            req.topic = reader.read_string();
+            int32_t partition_count = reader.read_int32();
+            for (int32_t j = 0; j < partition_count; ++j) {
+                req.partitions.push_back(reader.read_int32());
+            }
+            topics_to_fetch.push_back(std::move(req));
+        }
+    }
+    // topic_count == -1 means fetch all offsets for the group
+    
+    std::println("OffsetFetch: group={}, topics={}", group_id, topic_count);
     
     BufferWriter writer;
     writer.write_int32(header.correlation_id);
@@ -1201,19 +1452,146 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_offset_fetch(
         writer.write_int32(0);
     }
     
-    // Topics array - empty
-    writer.write_int32(0);
+    // Obter offsets do grupo
+    std::map<eventhorizon::TopicPartition, eventhorizon::CommittedOffset> offsets;
+    int16_t group_error = 0;
+    
+    if (consumer_group_manager_) {
+        auto* group = consumer_group_manager_->get_group(group_id);
+        if (group) {
+            offsets = group->all_offsets();
+        } else {
+            group_error = static_cast<int16_t>(ErrorCode::InvalidGroupId);
+        }
+    } else {
+        group_error = static_cast<int16_t>(ErrorCode::CoordinatorNotAvailable);
+    }
+    
+    // Se especificamos tópicos, filtrar
+    if (!topics_to_fetch.empty()) {
+        // Retornar apenas os tópicos/partições requisitados
+        writer.write_int32(static_cast<int32_t>(topics_to_fetch.size()));
+        for (const auto& topic_req : topics_to_fetch) {
+            writer.write_string(topic_req.topic);
+            writer.write_int32(static_cast<int32_t>(topic_req.partitions.size()));
+            for (int32_t partition : topic_req.partitions) {
+                writer.write_int32(partition);
+                
+                eventhorizon::TopicPartition tp{topic_req.topic, partition};
+                if (auto it = offsets.find(tp); it != offsets.end()) {
+                    writer.write_int64(it->second.offset);
+                    if (header.api_version >= 5) {
+                        writer.write_int32(-1); // leader_epoch
+                    }
+                    writer.write_nullable_string(&it->second.metadata);
+                    writer.write_int16(0); // no error
+                } else {
+                    writer.write_int64(-1); // no offset committed
+                    if (header.api_version >= 5) {
+                        writer.write_int32(-1);
+                    }
+                    writer.write_nullable_string(nullptr);
+                    writer.write_int16(0);
+                }
+            }
+        }
+    } else {
+        // Retornar todos os offsets commitados
+        // Agrupar por tópico
+        std::map<std::string, std::vector<std::pair<int32_t, eventhorizon::CommittedOffset>>> grouped;
+        for (const auto& [tp, offset] : offsets) {
+            grouped[tp.topic].emplace_back(tp.partition, offset);
+        }
+        
+        writer.write_int32(static_cast<int32_t>(grouped.size()));
+        for (const auto& [topic, partitions] : grouped) {
+            writer.write_string(topic);
+            writer.write_int32(static_cast<int32_t>(partitions.size()));
+            for (const auto& [partition, offset] : partitions) {
+                writer.write_int32(partition);
+                writer.write_int64(offset.offset);
+                if (header.api_version >= 5) {
+                    writer.write_int32(-1); // leader_epoch
+                }
+                writer.write_nullable_string(&offset.metadata);
+                writer.write_int16(0);
+            }
+        }
+    }
     
     // Error code (v2+)
     if (header.api_version >= 2) {
-        writer.write_int16(static_cast<int16_t>(ErrorCode::None));
+        writer.write_int16(group_error);
     }
     
     return writer.data();
 }
 
 std::vector<uint8_t> KafkaProtocolHandler::handle_offset_commit(
-    const RequestHeader& header, BufferReader& /*reader*/) {
+    const RequestHeader& header, BufferReader& reader) {
+    
+    // Parse OffsetCommit request
+    std::string group_id = reader.read_string();
+    
+    int32_t generation_id = -1;
+    if (header.api_version >= 1) {
+        generation_id = reader.read_int32();
+    }
+    
+    std::string member_id;
+    if (header.api_version >= 1) {
+        member_id = reader.read_string();
+    }
+    
+    // group_instance_id (v7+)
+    if (header.api_version >= 7) {
+        reader.read_nullable_string();
+    }
+    
+    // retention_time_ms (v2-v4)
+    if (header.api_version >= 2 && header.api_version <= 4) {
+        reader.read_int64();
+    }
+    
+    // Parse topics
+    struct PartitionCommit {
+        int32_t partition;
+        int64_t offset;
+        int32_t leader_epoch;  // v6+
+        std::string metadata;
+    };
+    struct TopicCommit {
+        std::string topic;
+        std::vector<PartitionCommit> partitions;
+    };
+    std::vector<TopicCommit> topics_to_commit;
+    
+    int32_t topic_count = reader.read_int32();
+    for (int32_t i = 0; i < topic_count; ++i) {
+        TopicCommit tc;
+        tc.topic = reader.read_string();
+        int32_t partition_count = reader.read_int32();
+        for (int32_t j = 0; j < partition_count; ++j) {
+            PartitionCommit pc;
+            pc.partition = reader.read_int32();
+            pc.offset = reader.read_int64();
+            pc.leader_epoch = -1;
+            if (header.api_version >= 6) {
+                pc.leader_epoch = reader.read_int32();
+            }
+            if (header.api_version >= 1) {
+                // v1 had timestamp here, but it was removed in v2
+                if (header.api_version == 1) {
+                    reader.read_int64(); // timestamp
+                }
+            }
+            pc.metadata = reader.read_nullable_string();
+            tc.partitions.push_back(std::move(pc));
+        }
+        topics_to_commit.push_back(std::move(tc));
+    }
+    
+    std::println("OffsetCommit: group={}, topics={}", group_id, topic_count);
     
     BufferWriter writer;
     writer.write_int32(header.correlation_id);
@@ -1223,17 +1601,79 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_offset_commit(
         writer.write_int32(0);
     }
     
-    // Topics array - empty
-    writer.write_int32(0);
+    // Processar commits
+    int16_t default_error = 0;
+    if (consumer_group_manager_) {
+        auto* group = consumer_group_manager_->get_group(group_id);
+        if (group) {
+            for (const auto& tc : topics_to_commit) {
+                for (const auto& pc : tc.partitions) {
+                    group->commit_offset(tc.topic, pc.partition, pc.offset, pc.metadata);
+                }
+            }
+        } else {
+            default_error = static_cast<int16_t>(ErrorCode::InvalidGroupId);
+        }
+    } else {
+        default_error = static_cast<int16_t>(ErrorCode::CoordinatorNotAvailable);
+    }
+    
+    // Escrever resposta
+    writer.write_int32(static_cast<int32_t>(topics_to_commit.size()));
+    for (const auto& tc : topics_to_commit) {
+        writer.write_string(tc.topic);
+        writer.write_int32(static_cast<int32_t>(tc.partitions.size()));
+        for (const auto& pc : tc.partitions) {
+            writer.write_int32(pc.partition);
+            writer.write_int16(default_error);
+        }
+    }
     
     return writer.data();
 }
 
 std::vector<uint8_t> KafkaProtocolHandler::handle_list_groups(
-    const RequestHeader& header, BufferReader& /*reader*/) {
+    const RequestHeader& header, BufferReader& reader) {
+    
+    // ListGroups v4+ uses flexible format
+    bool flexible = (header.api_version >= 4);
+    
+    // Parse request (v4+ has states_filter and types_filter)
+    if (flexible) {
+        // States filter (compact array)
+        uint32_t states_count = reader.read_unsigned_varint();
+        if (states_count > 1) {
+            for (uint32_t i = 0; i < states_count - 1; ++i) {
+                reader.read_compact_string(); // state filter
+            }
+        }
+        
+        // Types filter (v5+)
+        if (header.api_version >= 5) {
+            uint32_t types_count = reader.read_unsigned_varint();
+            if (types_count > 1) {
+                for (uint32_t i = 0; i < types_count - 1; ++i) {
+                    reader.read_compact_string(); // type filter
+                }
+            }
+        }
+        
+        // Skip tagged fields
+        uint32_t tag_count = reader.read_unsigned_varint();
+        for (uint32_t i = 0; i < tag_count; i++) {
+            reader.read_unsigned_varint(); // tag
+            uint32_t len = reader.read_unsigned_varint();
+            reader.skip(len);
+        }
+    }
     
     BufferWriter writer;
     writer.write_int32(header.correlation_id);
+    
+    if (flexible) {
+        // Response header tagged fields
+        writer.write_unsigned_varint(0);
+    }
     
     // Throttle time (v1+)
     if (header.api_version >= 1) {
@@ -1249,14 +1689,30 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_list_groups(
         groups = groups_callback_();
     }
     
-    writer.write_int32(static_cast<int32_t>(groups.size()));
-    for (const auto& group : groups) {
-        writer.write_string(group.group_id);
-        writer.write_string(group.protocol_type);
+    if (flexible) {
+        // Compact array (size + 1)
+        writer.write_unsigned_varint(static_cast<uint32_t>(groups.size() + 1));
+        for (const auto& group : groups) {
+            writer.write_compact_string(group.group_id);
+            writer.write_compact_string(group.protocol_type);
+            writer.write_compact_string(group.state); // v4+
+            
+            // Group type (v5+)
+            if (header.api_version >= 5) {
+                writer.write_compact_string("consumer"); // group_type
+            }
+            
+            // Tagged fields for each group
+            writer.write_unsigned_varint(0);
+        }
         
-        // Group state (v4+)
-        if (header.api_version >= 4) {
-            writer.write_string(group.state);
+        // Response tagged fields
+        writer.write_unsigned_varint(0);
+    } else {
+        writer.write_int32(static_cast<int32_t>(groups.size()));
+        for (const auto& group : groups) {
+            writer.write_string(group.group_id);
+            writer.write_string(group.protocol_type);
         }
     }
     
@@ -1266,15 +1722,43 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_list_groups(
 std::vector<uint8_t> KafkaProtocolHandler::handle_describe_groups(
     const RequestHeader& header, BufferReader& reader) {
     
+    // DescribeGroups v5+ uses flexible format
+    bool flexible = (header.api_version >= 5);
+    
     // Read group IDs
-    int32_t group_count = reader.read_int32();
+    int32_t group_count;
     std::vector<std::string> group_ids;
-    for (int32_t i = 0; i < group_count; ++i) {
-        group_ids.push_back(reader.read_string());
+    
+    if (flexible) {
+        group_count = static_cast<int32_t>(reader.read_unsigned_varint()) - 1;
+        for (int32_t i = 0; i < group_count; ++i) {
+            group_ids.push_back(reader.read_compact_string());
+        }
+        // include_authorized_operations (v3+)
+        if (header.api_version >= 3) {
+            reader.read_bool();
+        }
+        // Skip tagged fields
+        uint32_t tag_count = reader.read_unsigned_varint();
+        for (uint32_t i = 0; i < tag_count; i++) {
+            reader.read_unsigned_varint();
+            uint32_t len = reader.read_unsigned_varint();
+            reader.skip(len);
+        }
+    } else {
+        group_count = reader.read_int32();
+        for (int32_t i = 0; i < group_count; ++i) {
+            group_ids.push_back(reader.read_string());
+        }
     }
     
     BufferWriter writer;
     writer.write_int32(header.correlation_id);
+    
+    if (flexible) {
+        // Response header tagged fields
+        writer.write_unsigned_varint(0);
+    }
     
     // Throttle time (v1+)
     if (header.api_version >= 1) {
@@ -1287,7 +1771,93 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_describe_groups(
         all_groups = groups_callback_();
     }
     
-    writer.write_int32(static_cast<int32_t>(group_ids.size()));
+    auto write_group = [&](const std::string& group_id, ConsumerGroupInfo* found_group) {
+        if (found_group) {
+            if (flexible) {
+                writer.write_int16(static_cast<int16_t>(ErrorCode::None));
+                writer.write_compact_string(found_group->group_id);
+                writer.write_compact_string(found_group->state);
+                writer.write_compact_string(found_group->protocol_type);
+                writer.write_compact_string(""); // protocol_data
+                
+                // Members (compact array)
+                writer.write_unsigned_varint(static_cast<uint32_t>(found_group->members.size() + 1));
+                for (const auto& member : found_group->members) {
+                    writer.write_compact_string(member); // member_id
+                    writer.write_compact_string(""); // group_instance_id
+                    writer.write_compact_string(""); // client_id
+                    writer.write_compact_string(broker_host_); // client_host
+                    
+                    // member_metadata (compact bytes)
+                    writer.write_unsigned_varint(1); // 0 bytes + 1
+                    // member_assignment (compact bytes)
+                    writer.write_unsigned_varint(1); // 0 bytes + 1
+                    
+                    // Member tagged fields
+                    writer.write_unsigned_varint(0);
+                }
+                
+                // Authorized operations (v3+)
+                writer.write_int32(-2147483648);
+                
+                // Group tagged fields
+                writer.write_unsigned_varint(0);
+            } else {
+                writer.write_int16(static_cast<int16_t>(ErrorCode::None));
+                writer.write_string(found_group->group_id);
+                writer.write_string(found_group->state);
+                writer.write_string(found_group->protocol_type);
+                writer.write_string(""); // protocol_data
+                
+                // Members
+                writer.write_int32(static_cast<int32_t>(found_group->members.size()));
+                for (const auto& member : found_group->members) {
+                    writer.write_string(member); // member_id
+                    if (header.api_version >= 4) {
+                        writer.write_nullable_string(nullptr); // group_instance_id
+                    }
+                    writer.write_string(""); // client_id
+                    writer.write_string(broker_host_); // client_host
+                    writer.write_bytes({}); // member_metadata
+                    writer.write_bytes({}); // member_assignment
+                }
+                
+                // Authorized operations (v3+)
+                if (header.api_version >= 3) {
+                    writer.write_int32(-2147483648);
+                }
+            }
+        } else {
+            // Group not found
+            if (flexible) {
+                writer.write_int16(static_cast<int16_t>(ErrorCode::InvalidGroupId));
+                writer.write_compact_string(group_id);
+                writer.write_compact_string("Dead");
+                writer.write_compact_string("");
+                writer.write_compact_string("");
+                writer.write_unsigned_varint(1); // empty members array
+                writer.write_int32(-2147483648); // authorized_operations
+                writer.write_unsigned_varint(0); // tagged fields
+            } else {
+                writer.write_int16(static_cast<int16_t>(ErrorCode::InvalidGroupId));
+                writer.write_string(group_id);
+                writer.write_string("Dead");
+                writer.write_string("");
+                writer.write_string("");
+                writer.write_int32(0); // empty members
+                if (header.api_version >= 3) {
+                    writer.write_int32(-2147483648);
+                }
+            }
+        }
+    };
+    
+    if (flexible) {
+        writer.write_unsigned_varint(static_cast<uint32_t>(group_ids.size() + 1));
+    } else {
+        writer.write_int32(static_cast<int32_t>(group_ids.size()));
+    }
+    
     for (const auto& group_id : group_ids) {
         // Find group
         ConsumerGroupInfo* found_group = nullptr;
@@ -1297,42 +1867,12 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_describe_groups(
                 break;
             }
         }
-        
-        if (found_group) {
-            writer.write_int16(static_cast<int16_t>(ErrorCode::None));
-            writer.write_string(found_group->group_id);
-            writer.write_string(found_group->state);
-            writer.write_string(found_group->protocol_type);
-            writer.write_string(""); // protocol data
-            
-            // Members
-            writer.write_int32(static_cast<int32_t>(found_group->members.size()));
-            for (const auto& member : found_group->members) {
-                writer.write_string(member); // member_id
-                if (header.api_version >= 4) {
-                    writer.write_nullable_string(nullptr); // group_instance_id
-                }
-                writer.write_string(""); // client_id
-                writer.write_string(broker_host_); // client_host
-                writer.write_bytes({}); // member_metadata
-                writer.write_bytes({}); // member_assignment
-            }
-            
-            // Authorized operations (v3+)
-            if (header.api_version >= 3) {
-                writer.write_int32(-2147483648);
-            }
-        } else {
-            writer.write_int16(static_cast<int16_t>(ErrorCode::InvalidGroupId));
-            writer.write_string(group_id);
-            writer.write_string("Dead");
-            writer.write_string("");
-            writer.write_string("");
-            writer.write_int32(0); // empty members
-            if (header.api_version >= 3) {
-                writer.write_int32(-2147483648);
-            }
-        }
+        write_group(group_id, found_group);
+    }
+    
+    if (flexible) {
+        // Response tagged fields
+        writer.write_unsigned_varint(0);
     }
     
     return writer.data();
@@ -1887,6 +2427,204 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_delete_topics(
         }
         
         // Tagged fields for each topic (flexible)
+        if (flexible) {
+            writer.write_unsigned_varint(0);
+        }
+    }
+    
+    // Tagged fields at end (flexible)
+    if (flexible) {
+        writer.write_unsigned_varint(0);
+    }
+    
+    return writer.data();
+}
+
+// ============================================================================
+// DeleteRecords (API 21) - Kafka 4.1.x uses v1-v2
+// Used by Kafka UI "Clear Messages" feature
+// ============================================================================
+std::vector<uint8_t> KafkaProtocolHandler::handle_delete_records(
+    const RequestHeader& header, BufferReader& reader) {
+    
+    // v1+ uses flexible format in Kafka 4.1
+    bool flexible = (header.api_version >= 1);
+    
+    struct PartitionRequest {
+        int32_t partition_id;
+        int64_t offset;  // -1 means high watermark (delete all)
+    };
+    
+    struct TopicRequest {
+        std::string name;
+        std::vector<PartitionRequest> partitions;
+    };
+    
+    std::vector<TopicRequest> topics;
+    
+    // Parse request
+    if (flexible) {
+        // Skip leading 0x00 if present (workaround for some clients)
+        const uint8_t* ptr = reader.current();
+        if (reader.remaining() >= 2 && ptr[0] == 0x00 && ptr[1] >= 0x01 && ptr[1] <= 0x40) {
+            reader.skip(1);
+        }
+        
+        // COMPACT_ARRAY of topics
+        uint32_t topic_count = reader.read_unsigned_varint();
+        if (topic_count > 0) {
+            topic_count--;  // compact array uses length + 1
+            topics.reserve(topic_count);
+            
+            for (uint32_t i = 0; i < topic_count; ++i) {
+                TopicRequest topic;
+                topic.name = reader.read_compact_string();
+                
+                // COMPACT_ARRAY of partitions
+                uint32_t partition_count = reader.read_unsigned_varint();
+                if (partition_count > 0) {
+                    partition_count--;
+                    topic.partitions.reserve(partition_count);
+                    
+                    for (uint32_t j = 0; j < partition_count; ++j) {
+                        PartitionRequest part;
+                        part.partition_id = reader.read_int32();
+                        part.offset = reader.read_int64();
+                        
+                        // Tagged fields per partition
+                        reader.read_unsigned_varint();
+                        
+                        topic.partitions.push_back(part);
+                    }
+                }
+                
+                // Tagged fields per topic
+                reader.read_unsigned_varint();
+                topics.push_back(std::move(topic));
+            }
+        }
+        
+        // timeout_ms
+        [[maybe_unused]] int32_t timeout = reader.read_int32();
+        
+        // Tagged fields at end
+        reader.read_unsigned_varint();
+    } else {
+        // Non-flexible format (v0)
+        int32_t topic_count = reader.read_int32();
+        topics.reserve(static_cast<size_t>(topic_count));
+        
+        for (int32_t i = 0; i < topic_count; ++i) {
+            TopicRequest topic;
+            topic.name = reader.read_string();
+            
+            int32_t partition_count = reader.read_int32();
+            topic.partitions.reserve(static_cast<size_t>(partition_count));
+            
+            for (int32_t j = 0; j < partition_count; ++j) {
+                PartitionRequest part;
+                part.partition_id = reader.read_int32();
+                part.offset = reader.read_int64();
+                topic.partitions.push_back(part);
+            }
+            
+            topics.push_back(std::move(topic));
+        }
+        
+        // timeout_ms
+        reader.read_int32();
+    }
+    
+    std::cout << "Request: API=21 (DeleteRecords) v" << header.api_version 
+              << " CorrId=" << header.correlation_id << "\n";
+    
+    // Structure for response
+    struct PartitionResponse {
+        int32_t partition_id;
+        int64_t low_watermark;
+        int16_t error_code;
+    };
+    
+    struct TopicResponse {
+        std::string name;
+        std::vector<PartitionResponse> partitions;
+    };
+    
+    std::vector<TopicResponse> responses;
+    responses.reserve(topics.size());
+    
+    // Process each topic/partition
+    for (const auto& topic : topics) {
+        TopicResponse resp;
+        resp.name = topic.name;
+        resp.partitions.reserve(topic.partitions.size());
+        
+        for (const auto& part : topic.partitions) {
+            PartitionResponse presp;
+            presp.partition_id = part.partition_id;
+            
+            // Try to delete records if we have a callback
+            // For now, we just return success with the requested offset
+            // In a full implementation, this would call broker.delete_records()
+            presp.low_watermark = (part.offset == -1) ? 0 : part.offset;
+            presp.error_code = static_cast<int16_t>(ErrorCode::None);
+            
+            std::cout << "  DeleteRecords: " << topic.name << "-" << part.partition_id
+                      << " before offset " << part.offset 
+                      << " -> new low_watermark=" << presp.low_watermark << "\n";
+            
+            resp.partitions.push_back(presp);
+        }
+        
+        responses.push_back(std::move(resp));
+    }
+    
+    // Build response
+    BufferWriter writer;
+    writer.write_int32(header.correlation_id);
+    
+    if (flexible) {
+        // Header tagged fields
+        writer.write_unsigned_varint(0);
+    }
+    
+    // throttle_time_ms
+    writer.write_int32(0);
+    
+    // Topics array
+    if (flexible) {
+        writer.write_unsigned_varint(static_cast<uint32_t>(responses.size() + 1));
+    } else {
+        writer.write_int32(static_cast<int32_t>(responses.size()));
+    }
+    
+    for (const auto& topic : responses) {
+        // Topic name
+        if (flexible) {
+            writer.write_compact_string(topic.name);
+        } else {
+            writer.write_string(topic.name);
+        }
+        
+        // Partitions array
+        if (flexible) {
+            writer.write_unsigned_varint(static_cast<uint32_t>(topic.partitions.size() + 1));
+        } else {
+            writer.write_int32(static_cast<int32_t>(topic.partitions.size()));
+        }
+        
+        for (const auto& part : topic.partitions) {
+            writer.write_int32(part.partition_id);
+            writer.write_int64(part.low_watermark);
+            writer.write_int16(part.error_code);
+            
+            // Tagged fields per partition (flexible)
+            if (flexible) {
+                writer.write_unsigned_varint(0);
+            }
+        }
+        
+        // Tagged fields per topic (flexible)
         if (flexible) {
             writer.write_unsigned_varint(0);
         }

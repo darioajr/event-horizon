@@ -2,12 +2,14 @@
 
 #include "../storage/partition.hpp"
 #include "../protocol/kafka_protocol.hpp"
+#include "../consumer/consumer_group.hpp"
 #include <unordered_map>
 #include <memory>
 #include <string>
 #include <vector>
 #include <atomic>
 #include <shared_mutex>
+#include <thread>
 
 namespace eventhorizon {
 
@@ -73,8 +75,29 @@ public:
     
     /**
      * @brief Remove um tópico
+     * @param purge_data Se true, remove também os arquivos físicos
      */
-    void delete_topic(const std::string& name);
+    void delete_topic(const std::string& name, bool purge_data = true);
+    
+    /**
+     * @brief Recria um tópico (delete + create com mesmas configurações)
+     * Usado pelo Kafka UI "Recreate Topic"
+     */
+    void recreate_topic(const std::string& name);
+    
+    /**
+     * @brief Remove records antes de um offset em uma partição
+     * Usado pelo Kafka UI "Clear Messages" via DeleteRecords API
+     * @param offset Use -1 para high watermark (limpar tudo)
+     * @return O novo low_watermark após a operação
+     */
+    int64_t delete_records(const std::string& topic, int32_t partition_id, int64_t offset);
+    
+    /**
+     * @brief Trunca todas as partições de um tópico (limpa todas as mensagens)
+     * Usado pelo Kafka UI "Clear Messages"
+     */
+    void clear_topic_messages(const std::string& name);
     
     /**
      * @brief Lista todos os tópicos
@@ -121,6 +144,11 @@ public:
      * @brief Retorna a configuração do broker
      */
     const BrokerConfig& config() const { return config_; }
+    
+    /**
+     * @brief Retorna o gerenciador de consumer groups
+     */
+    ConsumerGroupManager& consumer_groups() { return consumer_group_manager_; }
 
 private:
     void load_topics();
@@ -150,8 +178,12 @@ private:
     std::string get_topic_name_by_id(const std::vector<uint8_t>& topic_id) const;
     std::vector<uint8_t> get_or_create_topic_id(const std::string& topic_name);
     
-    mutable std::shared_mutex groups_mutex_;
-    std::unordered_map<std::string, protocol::ConsumerGroupInfo> consumer_groups_;
+    // Consumer Groups Manager
+    ConsumerGroupManager consumer_group_manager_;
+    
+    // Session expiration thread
+    std::jthread session_expiration_thread_;
+    void session_expiration_loop(std::stop_token stop_token);
 };
 
 } // namespace eventhorizon

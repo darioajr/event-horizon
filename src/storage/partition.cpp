@@ -245,13 +245,16 @@ void Partition::flush() {
     }
 }
 
-void Partition::delete_records_before(int64_t offset) {
-    std::lock_guard<std::mutex> lock(mutex_);
+int64_t Partition::delete_records_before(int64_t offset) {
+    std::lock_guard lock(mutex_);  // C++23 CTAD
     
-    // Remover segments antigos
+    // Se offset é -1 (high watermark), usar log_end_offset
+    int64_t target_offset = (offset == -1) ? log_end_offset_ : offset;
+    
+    // Remover segments antigos cujos records estão todos antes do offset
     while (segments_.size() > 1) {
         auto& oldest = segments_.front();
-        if (oldest->get_next_offset() <= offset) {
+        if (oldest->get_next_offset() <= target_offset) {
             std::cout << "Deleting old segment with base_offset=" 
                       << oldest->get_base_offset() << "\n";
             segments_.pop_front();
@@ -260,7 +263,41 @@ void Partition::delete_records_before(int64_t offset) {
         }
     }
     
+    // Atualizar log_start_offset
     if (!segments_.empty()) {
-        log_start_offset_ = segments_.front()->get_base_offset();
+        // Se todos os records foram deletados, mover start para target
+        if (segments_.front()->get_base_offset() < target_offset) {
+            log_start_offset_ = target_offset;
+        } else {
+            log_start_offset_ = segments_.front()->get_base_offset();
+        }
     }
+    
+    return log_start_offset_;
+}
+
+void Partition::truncate() {
+    std::lock_guard lock(mutex_);  // C++23 CTAD
+    
+    std::cout << "Truncating partition " << topic_ << "-" << partition_id_ << "\n";
+    
+    // Remover todos os segments
+    segments_.clear();
+    
+    // Remover arquivos físicos
+    namespace fs = std::filesystem;
+    for (const auto& entry : fs::directory_iterator(partition_dir_)) {
+        if (entry.is_regular_file()) {
+            fs::remove(entry.path());
+        }
+    }
+    
+    // Criar novo segment vazio com base_offset = log_end_offset atual
+    // Isso preserva a continuidade do offset
+    int64_t new_base = log_end_offset_;
+    log_start_offset_ = new_base;
+    
+    create_new_segment(new_base);
+    
+    std::cout << "Partition truncated, new base_offset=" << new_base << "\n";
 }
