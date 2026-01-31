@@ -1,11 +1,10 @@
 #include "kafka_protocol.hpp"
 #include "../consumer/consumer_group.hpp"
+#include "../logging/logger.hpp"
 #include <stdexcept>
 #include <cstring>
 #include <chrono>
-#include <iostream>
 #include <atomic>
-#include <print>
 
 namespace eventhorizon {
 namespace protocol {
@@ -570,10 +569,9 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_request(
         BufferReader reader(request);
         RequestHeader header = RequestHeader::parse(reader);
         
-        std::cout << "Request: API=" << static_cast<int>(header.api_key)
-                  << " v" << header.api_version
-                  << " CorrId=" << header.correlation_id
-                  << " Client=" << header.client_id << "\n";
+        LOG_TRACE("Request: API={} v{} CorrId={} Client={}",
+                  static_cast<int>(header.api_key), header.api_version,
+                  header.correlation_id, header.client_id);
         
         // Verificar se há handler customizado
         auto custom_it = custom_handlers_.find(static_cast<int16_t>(header.api_key));
@@ -627,11 +625,11 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_request(
             case ApiKey::DescribeLogDirs:
                 return handle_describe_log_dirs(header, reader);
             default:
-                std::cerr << "Unsupported API: " << static_cast<int>(header.api_key) << "\n";
+                LOG_WARN("Unsupported API: {}", static_cast<int>(header.api_key));
                 return make_error_response(header, ErrorCode::UnsupportedVersion);
         }
     } catch (const std::exception& e) {
-        std::cerr << "Error processing request: " << e.what() << "\n";
+        LOG_ERROR("Error processing request: {}", e.what());
         return {};
     }
 }
@@ -847,9 +845,12 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_metadata(
     
     // Debug: show topics being returned
     if (!topics.empty()) {
-        std::cout << "  Metadata returning " << topics.size() << " topics: ";
-        for (const auto& t : topics) std::cout << t.name << " ";
-        std::cout << "\n";
+        std::string topic_names;
+        for (const auto& t : topics) {
+            if (!topic_names.empty()) topic_names += ", ";
+            topic_names += t.name;
+        }
+        LOG_TRACE("Metadata returning {} topics: {}", topics.size(), topic_names);
     }
     
     if (flexible) {
@@ -1124,8 +1125,8 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_join_group(
         protocols.emplace_back(std::move(name), std::move(metadata));
     }
     
-    std::println("JoinGroup: group={}, member={}, protocol_type={}, protocols={}",
-        group_id, member_id, protocol_type, protocol_count);
+    LOG_DEBUG("JoinGroup: group={}, member={}, protocol_type={}, protocols={}",
+              group_id, member_id, protocol_type, protocol_count);
     
     BufferWriter writer;
     writer.write_int32(header.correlation_id);
@@ -1241,8 +1242,8 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_sync_group(
         assignments.emplace_back(std::move(mid), std::move(assignment));
     }
     
-    std::println("SyncGroup: group={}, member={}, gen={}, assignments={}",
-        group_id, member_id, generation_id, assignment_count);
+    LOG_DEBUG("SyncGroup: group={}, member={}, gen={}, assignments={}",
+              group_id, member_id, generation_id, assignment_count);
     
     BufferWriter writer;
     writer.write_int32(header.correlation_id);
@@ -1363,7 +1364,7 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_leave_group(
         members_to_leave.emplace_back(member_id, std::nullopt);
     }
     
-    std::println("LeaveGroup: group={}, members={}", group_id, members_to_leave.size());
+    LOG_DEBUG("LeaveGroup: group={}, members={}", group_id, members_to_leave.size());
     
     BufferWriter writer;
     writer.write_int32(header.correlation_id);
@@ -1442,7 +1443,7 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_offset_fetch(
     }
     // topic_count == -1 means fetch all offsets for the group
     
-    std::println("OffsetFetch: group={}, topics={}", group_id, topic_count);
+    LOG_TRACE("OffsetFetch: group={}, topics={}", group_id, topic_count);
     
     BufferWriter writer;
     writer.write_int32(header.correlation_id);
@@ -1591,7 +1592,7 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_offset_commit(
         topics_to_commit.push_back(std::move(tc));
     }
     
-    std::println("OffsetCommit: group={}, topics={}", group_id, topic_count);
+    LOG_TRACE("OffsetCommit: group={}, topics={}", group_id, topic_count);
     
     BufferWriter writer;
     writer.write_int32(header.correlation_id);
@@ -1884,7 +1885,7 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_describe_configs(
     // DescribeConfigs v4+ uses flexible format
     bool flexible = (header.api_version >= 4);
     
-    std::cout << "  DescribeConfigs v" << header.api_version << " (flexible=" << flexible << ")\n";
+    LOG_TRACE("DescribeConfigs v{} (flexible={})", header.api_version, flexible);
     
     // Parse the resources from the request
     struct ConfigResource {
@@ -1902,7 +1903,7 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_describe_configs(
             resource_count = reader.read_int32();
         }
         
-        std::cout << "    resource_count=" << resource_count << "\n";
+        LOG_TRACE("DescribeConfigs resource_count={}", resource_count);
         
         for (int32_t i = 0; i < resource_count && i < 100; ++i) {
             ConfigResource resource;
@@ -1913,8 +1914,8 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_describe_configs(
                 resource.resource_name = reader.read_string();
             }
             
-            std::cout << "    resource: type=" << (int)resource.resource_type 
-                      << " name=" << resource.resource_name << "\n";
+            LOG_TRACE("DescribeConfigs resource: type={} name={}",
+                      (int)resource.resource_type, resource.resource_name);
             
             // Skip configuration_keys array (nullable)
             int32_t key_count;
@@ -2192,7 +2193,7 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_create_topics(
                     value = reader.read_nullable_string();
                 }
                 topic.configs[key] = value;
-                std::cout << "    Config: " << key << "=" << value << "\n";
+                LOG_TRACE("CreateTopics config: {}={}", key, value);
                 
                 if (flexible) {
                     reader.read_unsigned_varint(); // tagged fields for config
@@ -2242,12 +2243,11 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_create_topics(
             
             add_topic(topic_info);
             
-            std::cout << "  Created topic: " << topic_info.name 
-                      << " partitions=" << topic_info.num_partitions 
-                      << " configs=" << topic_info.configs.size() << "\n";
+            LOG_INFO("Created topic: {} partitions={} configs={}",
+                     topic_info.name, topic_info.num_partitions, topic_info.configs.size());
         }
     } catch (const std::exception& e) {
-        std::cerr << "CreateTopics parse warning (continuing): " << e.what() << "\n";
+        LOG_WARN("CreateTopics parse warning (continuing): {}", e.what());
         // Continue with whatever topics we managed to parse
     }
     
@@ -2376,9 +2376,14 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_delete_topics(
         }
     }
     
-    std::cout << "  Deleted topics: ";
-    for (const auto& n : topic_names) std::cout << n << " ";
-    std::cout << "\n";
+    {
+        std::string names_str;
+        for (const auto& n : topic_names) {
+            if (!names_str.empty()) names_str += ", ";
+            names_str += n;
+        }
+        LOG_INFO("Deleted topics: {}", names_str);
+    }
     
     BufferWriter writer;
     writer.write_int32(header.correlation_id);
@@ -2535,8 +2540,7 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_delete_records(
         reader.read_int32();
     }
     
-    std::cout << "Request: API=21 (DeleteRecords) v" << header.api_version 
-              << " CorrId=" << header.correlation_id << "\n";
+    LOG_TRACE("DeleteRecords v{} CorrId={}", header.api_version, header.correlation_id);
     
     // Structure for response
     struct PartitionResponse {
@@ -2569,9 +2573,8 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_delete_records(
             presp.low_watermark = (part.offset == -1) ? 0 : part.offset;
             presp.error_code = static_cast<int16_t>(ErrorCode::None);
             
-            std::cout << "  DeleteRecords: " << topic.name << "-" << part.partition_id
-                      << " before offset " << part.offset 
-                      << " -> new low_watermark=" << presp.low_watermark << "\n";
+            LOG_DEBUG("DeleteRecords: {}-{} before offset {} -> new low_watermark={}",
+                      topic.name, part.partition_id, part.offset, presp.low_watermark);
             
             resp.partitions.push_back(presp);
         }
@@ -2660,7 +2663,7 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_init_producer_id(
     int64_t producer_id = next_producer_id++;
     int16_t producer_epoch = 0;
     
-    std::cout << "  InitProducerId: assigned producer_id=" << producer_id << "\n";
+    LOG_TRACE("InitProducerId: assigned producer_id={}", producer_id);
     
     BufferWriter writer;
     writer.write_int32(header.correlation_id);
@@ -2728,7 +2731,7 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_create_partitions(
 std::vector<uint8_t> KafkaProtocolHandler::handle_describe_log_dirs(
     const RequestHeader& header, BufferReader& /*reader*/) {
     
-    std::cout << "DescribeLogDirs v" << header.api_version << " request\n";
+    LOG_TRACE("DescribeLogDirs v{} request", header.api_version);
     
     // DescribeLogDirs v2+ uses flexible format
     bool flexible = (header.api_version >= 2);
@@ -2770,7 +2773,7 @@ std::vector<uint8_t> KafkaProtocolHandler::handle_describe_log_dirs(
         }
     }
     
-    std::cout << "  Topics: " << topics.size() << ", total_bytes: " << total_bytes << "\n";
+    LOG_TRACE("DescribeLogDirs: {} topics, total_bytes={}", topics.size(), total_bytes);
     
     // Results array - one log directory
     if (flexible) {

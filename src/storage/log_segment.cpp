@@ -1,6 +1,6 @@
 #include "log_segment.hpp"
+#include "../logging/logger.hpp"
 #include <filesystem>
-#include <iostream>
 #include <iomanip>
 #include <sstream>
 #include <cstring>
@@ -262,9 +262,8 @@ void LogSegment::recover_offset() {
     next_offset_ = max_offset;
     
     if (batch_count > 0) {
-        std::cout << "Recovered segment " << path_ 
-                  << " with " << batch_count << " batches, "
-                  << "next_offset=" << next_offset_ << "\n";
+        LOG_DEBUG("Recovered segment {} with {} batches, next_offset={}",
+                  path_, batch_count, next_offset_);
     }
 }
 

@@ -1,8 +1,8 @@
 #include "broker.hpp"
 #include "../network/server.hpp"
 #include "../protocol/kafka_protocol.hpp"
+#include "../logging/logger.hpp"
 #include <filesystem>
-#include <iostream>
 #include <fstream>
 #include <set>
 #include <algorithm>
@@ -65,7 +65,7 @@ BrokerConfig BrokerConfig::load(const std::string& config_path) {
     BrokerConfig config;
     
     if (!fs::exists(config_path)) {
-        std::cout << "Config file not found, using defaults: " << config_path << "\n";
+        LOG_INFO("Config file not found, using defaults: {}", config_path);
         return config;
     }
     
@@ -99,9 +99,9 @@ BrokerConfig BrokerConfig::load(const std::string& config_path) {
             config.cluster_id = json["cluster_id"].get<std::string>();
         }
         
-        std::cout << "Loaded config from: " << config_path << "\n";
+        LOG_INFO("Loaded config from: {}", config_path);
     } catch (const std::exception& e) {
-        std::cerr << "Error loading config: " << e.what() << "\n";
+        LOG_ERROR("Error loading config: {}", e.what());
     }
     
     return config;
@@ -133,7 +133,7 @@ Broker::Broker(const std::string& config_path)
     // Criar diretório de logs se não existir
     if (!fs::exists(config_.log_dir)) {
         fs::create_directories(config_.log_dir);
-        std::cout << "Created log directory: " << config_.log_dir << "\n";
+        LOG_INFO("Created log directory: {}", config_.log_dir);
     }
     
     // Inicializar protocol handler
@@ -203,7 +203,7 @@ Broker::Broker(const std::string& config_path)
     // Carregar tópicos existentes
     load_topics();
     
-    std::cout << "Broker " << config_.broker_id << " initialized\n";
+    LOG_INFO("Broker {} initialized", config_.broker_id);
 }
 
 Broker::~Broker() {
@@ -257,8 +257,7 @@ void Broker::load_topics() {
                     
                     topics_[topic].push_back(std::move(partition));
                     
-                    std::cout << "Loaded topic: " << topic 
-                              << " partition: " << partition_id << "\n";
+                    LOG_DEBUG("Loaded topic: {} partition: {}", topic, partition_id);
                 } catch (...) {
                     // Ignorar diretórios inválidos
                 }
@@ -280,7 +279,7 @@ void Broker::start() {
         return; // Já está rodando
     }
     
-    std::cout << "Starting broker on " << config_.host << ":" << config_.port << "\n";
+    LOG_INFO("Starting broker on {}:{}", config_.host, config_.port);
     
     // Criar servidor de rede
     server_ = std::make_unique<network::Server>(config_.port, config_.thread_pool_size);
@@ -293,7 +292,7 @@ void Broker::start() {
     // Iniciar servidor
     server_->start();
     
-    std::cout << "Broker " << config_.broker_id << " started successfully\n";
+    LOG_INFO("Broker {} started successfully", config_.broker_id);
 }
 
 void Broker::stop() {
@@ -301,7 +300,7 @@ void Broker::stop() {
         return;
     }
     
-    std::cout << "Stopping broker...\n";
+    LOG_INFO("Stopping broker...");
     
     // Parar thread de expiração de sessões
     if (session_expiration_thread_.joinable()) {
@@ -324,7 +323,7 @@ void Broker::stop() {
         }
     }
     
-    std::cout << "Broker stopped\n";
+    LOG_INFO("Broker stopped");
 }
 
 void Broker::session_expiration_loop(std::stop_token stop_token) {
@@ -362,8 +361,7 @@ void Broker::create_topic(const std::string& name, int32_t num_partitions,
     
     topics_[name] = std::move(partitions);
     
-    std::cout << "Created topic: " << name 
-              << " with " << num_partitions << " partitions\n";
+    LOG_INFO("Created topic: {} with {} partitions", name, num_partitions);
 }
 
 void Broker::delete_topic(const std::string& name, bool purge_data) {
@@ -387,13 +385,13 @@ void Broker::delete_topic(const std::string& name, bool purge_data) {
                 std::string suffix = dirname.substr(name.size() + 1);
                 if (!suffix.empty() && std::ranges::all_of(suffix, ::isdigit)) {
                     fs::remove_all(entry.path());
-                    std::cout << "Removed partition directory: " << entry.path() << "\n";
+                    LOG_DEBUG("Removed partition directory: {}", entry.path().string());
                 }
             }
         }
     }
     
-    std::cout << "Deleted topic: " << name << "\n";
+    LOG_INFO("Deleted topic: {}", name);
 }
 
 void Broker::recreate_topic(const std::string& name) {
@@ -417,7 +415,7 @@ void Broker::recreate_topic(const std::string& name) {
     // Recriar
     create_topic(name, num_partitions, replication_factor);
     
-    std::cout << "Recreated topic: " << name << "\n";
+    LOG_INFO("Recreated topic: {}", name);
 }
 
 int64_t Broker::delete_records(const std::string& topic, int32_t partition_id, int64_t offset) {
@@ -447,7 +445,7 @@ void Broker::clear_topic_messages(const std::string& name) {
         partition->truncate();
     }
     
-    std::cout << "Cleared all messages from topic: " << name << "\n";
+    LOG_INFO("Cleared all messages from topic: {}", name);
 }
 
 std::vector<std::string> Broker::list_topics() const {
@@ -503,8 +501,7 @@ Partition* Broker::get_partition(const std::string& topic, int32_t partition_id)
                         std::make_unique<Partition>(topic, i, config_.log_dir));
                 }
                 
-                std::cout << "Lazily created topic: " << topic 
-                          << " with " << num_parts << " partitions\n";
+                LOG_INFO("Lazily created topic: {} with {} partitions", topic, num_parts);
                 
                 topics_[topic] = std::move(partitions);
                 
@@ -599,7 +596,7 @@ static std::vector<ParsedRecord> parse_record_batch(const std::vector<uint8_t>& 
     std::vector<ParsedRecord> records;
     
     if (data.size() < 61) {
-        std::cerr << "[parse_record_batch] Data too small: " << data.size() << " bytes\n";
+        LOG_WARN("[parse_record_batch] Data too small: {} bytes", data.size());
         return records;
     }
     
@@ -624,7 +621,7 @@ static std::vector<ParsedRecord> parse_record_batch(const std::vector<uint8_t>& 
     // magic (1 byte)
     uint8_t magic = data[pos++];
     if (magic != 2) {
-        std::cerr << "[parse_record_batch] Unsupported magic: " << (int)magic << "\n";
+        LOG_WARN("[parse_record_batch] Unsupported magic: {}", (int)magic);
         return records;
     }
     
@@ -661,18 +658,15 @@ static std::vector<ParsedRecord> parse_record_batch(const std::vector<uint8_t>& 
         record_count = (record_count << 8) | data[pos++];
     }
     
-    std::cout << "[parse_record_batch] base_offset=" << base_offset 
-              << " batch_length=" << batch_length
-              << " first_timestamp=" << first_timestamp
-              << " record_count=" << record_count 
-              << " pos=" << pos << "\n";
+    LOG_TRACE("[parse_record_batch] base_offset={} batch_length={} first_timestamp={} record_count={} pos={}",
+              base_offset, batch_length, first_timestamp, record_count, pos);
     
     // Now parse individual records
     for (int32_t i = 0; i < record_count && pos < data.size(); i++) {
         // Record length (varint)
         int32_t record_len = decode_varint(data.data(), pos, data.size());
         if (record_len <= 0) {
-            std::cerr << "[parse_record_batch] Invalid record length: " << record_len << "\n";
+            LOG_WARN("[parse_record_batch] Invalid record length: {}", record_len);
             break;
         }
         
@@ -723,9 +717,8 @@ static std::vector<ParsedRecord> parse_record_batch(const std::vector<uint8_t>& 
         rec.value = value;
         rec.timestamp = first_timestamp + ts_delta;
         
-        std::cout << "[parse_record_batch] Record " << i << ": key=" << key 
-                  << " value_len=" << value_len 
-                  << " timestamp=" << rec.timestamp << "\n";
+        LOG_TRACE("[parse_record_batch] Record {}: key={} value_len={} timestamp={}",
+                  i, key, value_len, rec.timestamp);
         
         records.push_back(std::move(rec));
     }
@@ -906,7 +899,7 @@ std::vector<uint8_t> Broker::handle_produce_request(
                                    (static_cast<int32_t>(record_set[pos+2]) << 8) |
                                    static_cast<int32_t>(record_set[pos+3]);
                     
-                    std::cout << "[produce_raw_batch] Storing raw batch with " << record_count << " records\n";
+                    LOG_TRACE("[produce_raw_batch] Storing raw batch with {} records", record_count);
                     
                     // Store the raw batch (only updates baseOffset, keeps original CRC)
                     base_offset = produce_raw_batch(topic_name, partition_id, record_set, record_count);
@@ -982,11 +975,7 @@ std::vector<uint8_t> Broker::handle_produce_request(
     }
     
     auto response = writer.data();
-    std::cout << "  Produce response size=" << response.size() << " bytes: ";
-    for (size_t i = 0; i < std::min(response.size(), size_t(50)); ++i) {
-        printf("%02x ", response[i]);
-    }
-    std::cout << (response.size() > 50 ? "..." : "") << "\n";
+    LOG_TRACE("Produce response size={} bytes", response.size());
     
     return response;
 }
@@ -999,11 +988,11 @@ std::vector<uint8_t> Broker::handle_fetch_request(
     // We only support Fetch v12 - reject other versions
     bool is_flexible = (header.api_version >= 12);
     
-    std::cout << "  Fetch request v" << header.api_version << " (flexible=" << is_flexible << ")\n";
+    LOG_TRACE("Fetch request v{} (flexible={})", header.api_version, is_flexible);
     
     // Return UNSUPPORTED_VERSION for v13+ since they use topic_id (UUID) format
     if (header.api_version > 12) {
-        std::cout << "    Unsupported Fetch version, returning error\n";
+        LOG_WARN("Unsupported Fetch version {}", header.api_version);
         BufferWriter writer;
         writer.write_int32(header.correlation_id);
         writer.write_unsigned_varint(0); // header tagged fields
@@ -1231,10 +1220,9 @@ std::vector<uint8_t> Broker::handle_fetch_request(
             int64_t high_watermark = partition->get_log_end_offset();
             int64_t log_start_offset = partition->get_log_start_offset();
             
-            std::cout << "    topic=" << topic.name << " partition=" << fp.partition_id 
-                      << " fetch_offset=" << fp.fetch_offset 
-                      << " hwm=" << high_watermark << " raw_bytes=" << raw_data.size()
-                      << " records=" << record_count << "\n";
+            LOG_TRACE("Fetch: topic={} partition={} fetch_offset={} hwm={} raw_bytes={} records={}",
+                      topic.name, fp.partition_id, fp.fetch_offset, high_watermark, 
+                      raw_data.size(), record_count);
             
             writer.write_int16(static_cast<int16_t>(ErrorCode::None));
             writer.write_int64(high_watermark);
@@ -1304,17 +1292,17 @@ std::vector<uint8_t> Broker::handle_list_offsets_request(
     // ListOffsets v6+ uses flexible format
     bool is_flexible = (header.api_version >= 6);
     
-    std::cout << "  ListOffsets v" << header.api_version << " (flexible=" << is_flexible << ")\n";
+    LOG_TRACE("ListOffsets v{} (flexible={})", header.api_version, is_flexible);
     
     // Parse request
     // replica_id (all versions)
     int32_t replica_id = reader.read_int32();
-    std::cout << "    replica_id=" << replica_id << "\n";
+    LOG_TRACE("ListOffsets replica_id={}", replica_id);
     
     // isolation_level (v2+)
     if (header.api_version >= 2) {
         int8_t iso = reader.read_int8();
-        std::cout << "    isolation_level=" << (int)iso << "\n";
+        LOG_TRACE("ListOffsets isolation_level={}", (int)iso);
     }
     
     // Parse topics array
@@ -1359,9 +1347,8 @@ std::vector<uint8_t> Broker::handle_list_offsets_request(
             op.current_leader_epoch = (header.api_version >= 4) ? reader.read_int32() : -1;
             op.timestamp = reader.read_int64();
             
-            std::cout << "    partition=" << op.partition_id 
-                      << " leader_epoch=" << op.current_leader_epoch 
-                      << " timestamp=" << op.timestamp << "\n";
+            LOG_TRACE("ListOffsets partition={} leader_epoch={} timestamp={}",
+                      op.partition_id, op.current_leader_epoch, op.timestamp);
             
             if (is_flexible) {
                 reader.read_unsigned_varint(); // partition tagged fields
@@ -1461,7 +1448,7 @@ std::vector<uint8_t> Broker::handle_list_offsets_request(
                 offset = partition->get_log_end_offset();
             }
             
-            std::cout << "    -> returning offset=" << offset << " timestamp=" << timestamp << "\n";
+            LOG_TRACE("ListOffsets returning offset={} timestamp={}", offset, timestamp);
             
             writer.write_int16(static_cast<int16_t>(ErrorCode::None));
             
@@ -1492,12 +1479,7 @@ std::vector<uint8_t> Broker::handle_list_offsets_request(
     }
     
     auto response = writer.data();
-    std::cout << "  ListOffsets response size=" << response.size() << " bytes:\n    ";
-    for (size_t i = 0; i < response.size(); ++i) {
-        printf("%02x ", response[i]);
-        if ((i + 1) % 25 == 0) std::cout << "\n    ";
-    }
-    std::cout << "\n";
+    LOG_TRACE("ListOffsets response size={} bytes", response.size());
     
     return response;
 }
@@ -1664,9 +1646,12 @@ std::vector<uint8_t> Broker::handle_metadata_request(
     
     // Debug: mostrar tópicos sendo retornados
     if (!topics_to_return.empty()) {
-        std::cout << "  Metadata returning " << topics_to_return.size() << " topics: ";
-        for (const auto& t : topics_to_return) std::cout << t.name << " ";
-        std::cout << "\n";
+        std::string topic_list;
+        for (const auto& t : topics_to_return) {
+            if (!topic_list.empty()) topic_list += ", ";
+            topic_list += t.name;
+        }
+        LOG_TRACE("Metadata returning {} topics: {}", topics_to_return.size(), topic_list);
     }
     
     if (flexible) {

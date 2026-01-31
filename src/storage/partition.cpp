@@ -1,6 +1,6 @@
 #include "partition.hpp"
+#include "../logging/logger.hpp"
 #include <filesystem>
-#include <iostream>
 #include <algorithm>
 
 namespace fs = std::filesystem;
@@ -26,7 +26,7 @@ Partition::Partition(const std::string& topic, int32_t partition_id,
     
     if (!fs::exists(partition_dir_)) {
         fs::create_directories(partition_dir_);
-        std::cout << "Created partition directory: " << partition_dir_ << "\n";
+        LOG_DEBUG("Created partition directory: {}", partition_dir_);
     }
     
     // Carregar segments existentes ou criar novo
@@ -52,7 +52,7 @@ void Partition::load_segments() {
                 int64_t base_offset = std::stoll(filename);
                 base_offsets.push_back(base_offset);
             } catch (...) {
-                std::cerr << "Invalid segment file: " << filename << "\n";
+                LOG_WARN("Invalid segment file: {}", filename);
             }
         }
     }
@@ -73,9 +73,8 @@ void Partition::load_segments() {
     }
     
     if (!segments_.empty()) {
-        std::cout << "Loaded " << segments_.size() << " segments for " 
-                  << topic_ << "-" << partition_id_ 
-                  << " (offsets " << log_start_offset_ << " to " << log_end_offset_ << ")\n";
+        LOG_DEBUG("Loaded {} segments for {}-{} (offsets {} to {})",
+                  segments_.size(), topic_, partition_id_, log_start_offset_, log_end_offset_);
     }
 }
 
@@ -83,8 +82,8 @@ void Partition::create_new_segment(int64_t base_offset) {
     auto segment = std::make_unique<LogSegment>(partition_dir_, base_offset);
     segments_.push_back(std::move(segment));
     
-    std::cout << "Created new segment with base_offset=" << base_offset 
-              << " for " << topic_ << "-" << partition_id_ << "\n";
+    LOG_DEBUG("Created new segment with base_offset={} for {}-{}",
+              base_offset, topic_, partition_id_);
 }
 
 int64_t Partition::produce(const std::string& key, 
@@ -255,8 +254,7 @@ int64_t Partition::delete_records_before(int64_t offset) {
     while (segments_.size() > 1) {
         auto& oldest = segments_.front();
         if (oldest->get_next_offset() <= target_offset) {
-            std::cout << "Deleting old segment with base_offset=" 
-                      << oldest->get_base_offset() << "\n";
+            LOG_DEBUG("Deleting old segment with base_offset={}", oldest->get_base_offset());
             segments_.pop_front();
         } else {
             break;
@@ -279,7 +277,7 @@ int64_t Partition::delete_records_before(int64_t offset) {
 void Partition::truncate() {
     std::lock_guard lock(mutex_);  // C++23 CTAD
     
-    std::cout << "Truncating partition " << topic_ << "-" << partition_id_ << "\n";
+    LOG_INFO("Truncating partition {}-{}", topic_, partition_id_);
     
     // Remover todos os segments
     segments_.clear();
@@ -299,5 +297,5 @@ void Partition::truncate() {
     
     create_new_segment(new_base);
     
-    std::cout << "Partition truncated, new base_offset=" << new_base << "\n";
+    LOG_DEBUG("Partition truncated, new base_offset={}", new_base);
 }

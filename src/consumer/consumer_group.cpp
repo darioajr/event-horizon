@@ -1,7 +1,7 @@
 #include "consumer_group.hpp"
+#include "../logging/logger.hpp"
 #include <algorithm>
 #include <chrono>
-#include <print>
 
 namespace eventhorizon {
 
@@ -83,8 +83,8 @@ std::string ConsumerGroup::select_protocol() {
 
 void ConsumerGroup::transition_to(GroupState new_state) {
     if (state_ != new_state) {
-        std::println("  Group {} state: {} -> {}", 
-            group_id_, group_state_to_string(state_), group_state_to_string(new_state));
+        LOG_DEBUG("Group {} state: {} -> {}",
+                  group_id_, group_state_to_string(state_), group_state_to_string(new_state));
         state_ = new_state;
     }
 }
@@ -102,7 +102,7 @@ void ConsumerGroup::maybe_elect_new_leader() {
     
     // Elege o primeiro membro (ordem alfabética do member_id)
     leader_id_ = members_.begin()->first;
-    std::println("  Group {} elected new leader: {}", group_id_, leader_id_);
+    LOG_DEBUG("Group {} elected new leader: {}", group_id_, leader_id_);
 }
 
 void ConsumerGroup::reset_generation() {
@@ -130,8 +130,8 @@ ConsumerGroup::JoinResult ConsumerGroup::join(
     
     JoinResult result{};
     
-    std::println("  JoinGroup: group={}, member_id={}, client_id={}, protocols={}",
-        group_id_, member_id, client_id, protocols.size());
+    LOG_DEBUG("JoinGroup: group={}, member_id={}, client_id={}, protocols={}",
+              group_id_, member_id, client_id, protocols.size());
     
     // Validações
     if (protocols.empty()) {
@@ -149,7 +149,7 @@ ConsumerGroup::JoinResult ConsumerGroup::join(
     std::string actual_member_id;
     if (member_id.empty()) {
         actual_member_id = generate_member_id(client_id);
-        std::println("    Generated member_id: {}", actual_member_id);
+        LOG_DEBUG("Generated member_id: {}", actual_member_id);
     } else {
         actual_member_id = std::string(member_id);
     }
@@ -160,7 +160,7 @@ ConsumerGroup::JoinResult ConsumerGroup::join(
         if (auto it = static_members_.find(instance_id); it != static_members_.end()) {
             // Rejoin do mesmo static member
             actual_member_id = it->second;
-            std::println("    Static member rejoin: {} -> {}", instance_id, actual_member_id);
+            LOG_DEBUG("Static member rejoin: {} -> {}", instance_id, actual_member_id);
         } else {
             static_members_[instance_id] = actual_member_id;
         }
@@ -225,9 +225,9 @@ ConsumerGroup::JoinResult ConsumerGroup::join(
         }
     }
     
-    std::println("    JoinGroup result: gen={}, leader={}, is_leader={}, members={}",
-        result.generation_id, result.leader_id, 
-        actual_member_id == leader_id_, result.members.size());
+    LOG_DEBUG("JoinGroup result: gen={}, leader={}, is_leader={}, members={}",
+              result.generation_id, result.leader_id,
+              actual_member_id == leader_id_, result.members.size());
     
     return result;
 }
@@ -246,7 +246,7 @@ void ConsumerGroup::leave(std::string_view member_id) {
         members_awaiting_sync_.erase(id);
         pending_assignments_.erase(id);
         
-        std::println("  Member {} left group {}", member_id, group_id_);
+        LOG_DEBUG("Member {} left group {}", member_id, group_id_);
         
         if (members_.empty()) {
             transition_to(GroupState::Empty);
@@ -290,8 +290,8 @@ ConsumerGroup::SyncResult ConsumerGroup::sync(
     SyncResult result{};
     std::string id{member_id};
     
-    std::println("  SyncGroup: group={}, member={}, gen={}, assignments={}",
-        group_id_, member_id, gen_id, assignments.size());
+    LOG_DEBUG("SyncGroup: group={}, member={}, gen={}, assignments={}",
+              group_id_, member_id, gen_id, assignments.size());
     
     // Verificar se membro existe
     auto it = members_.find(id);
@@ -316,7 +316,7 @@ ConsumerGroup::SyncResult ConsumerGroup::sync(
     if (id == leader_id_ && !assignments.empty()) {
         for (const auto& [mid, assignment] : assignments) {
             pending_assignments_[mid] = assignment;
-            std::println("    Stored assignment for {}: {} bytes", mid, assignment.size());
+            LOG_TRACE("Stored assignment for {}: {} bytes", mid, assignment.size());
         }
     }
     
@@ -333,7 +333,7 @@ ConsumerGroup::SyncResult ConsumerGroup::sync(
         }
         pending_assignments_.clear();
         transition_to(GroupState::Stable);
-        std::println("    Group {} is now Stable", group_id_);
+        LOG_DEBUG("Group {} is now Stable", group_id_);
     }
     
     // Retornar assignment deste membro
@@ -395,8 +395,8 @@ void ConsumerGroup::commit_offset(
         ).count()
     };
     
-    std::println("  Committed offset: group={}, topic={}, partition={}, offset={}",
-        group_id_, topic, partition, offset);
+    LOG_TRACE("Committed offset: group={}, topic={}, partition={}, offset={}",
+              group_id_, topic, partition, offset);
 }
 
 std::optional<CommittedOffset> ConsumerGroup::fetch_offset(
@@ -424,7 +424,7 @@ std::vector<std::string> ConsumerGroup::expire_sessions() {
     
     for (auto it = members_.begin(); it != members_.end(); ) {
         if (it->second.is_session_expired()) {
-            std::println("  Session expired: group={}, member={}", group_id_, it->first);
+            LOG_DEBUG("Session expired: group={}, member={}", group_id_, it->first);
             expired.push_back(it->first);
             
             if (it->second.group_instance_id.has_value()) {
@@ -483,7 +483,7 @@ ConsumerGroup* ConsumerGroupManager::get_or_create_group(std::string_view group_
     auto* ptr = group.get();
     groups_[id] = std::move(group);
     
-    std::println("  Created consumer group: {}", group_id);
+    LOG_DEBUG("Created consumer group: {}", group_id);
     return ptr;
 }
 
@@ -504,7 +504,7 @@ void ConsumerGroupManager::delete_group(std::string_view group_id) {
     groups_.erase(id);
     empty_group_times_.erase(id);
     
-    std::println("  Deleted consumer group: {}", group_id);
+    LOG_DEBUG("Deleted consumer group: {}", group_id);
 }
 
 std::vector<ConsumerGroup::GroupDescription> ConsumerGroupManager::list_groups() const {
@@ -577,7 +577,7 @@ void ConsumerGroupManager::cleanup_empty_groups(std::chrono::seconds max_empty_t
     }
     
     for (const auto& id : to_remove) {
-        std::println("  Cleaning up empty group: {}", id);
+        LOG_DEBUG("Cleaning up empty group: {}", id);
         groups_.erase(id);
         empty_group_times_.erase(id);
     }

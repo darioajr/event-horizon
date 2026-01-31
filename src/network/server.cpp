@@ -1,5 +1,5 @@
 #include "server.hpp"
-#include <iostream>
+#include "../logging/logger.hpp"
 #include <algorithm>
 
 namespace eventhorizon {
@@ -60,7 +60,7 @@ void ClientSession::do_read_header() {
                 
                 // Limite de segurança: máximo 100MB por mensagem
                 if (body_length > 100 * 1024 * 1024) {
-                    std::cerr << "Message too large: " << body_length << " bytes\n";
+                    LOG_ERROR("Message too large: {} bytes", body_length);
                     close();
                     return;
                 }
@@ -69,7 +69,7 @@ void ClientSession::do_read_header() {
             } else {
                 if (ec != boost::asio::error::eof && 
                     ec != boost::asio::error::connection_reset) {
-                    std::cerr << "Read header error: " << ec.message() << "\n";
+                    LOG_WARN("Read header error: {}", ec.message());
                 }
                 close();
             }
@@ -92,7 +92,7 @@ void ClientSession::do_read_body(uint32_t body_length) {
                     try {
                         response = message_handler_(body_buffer_);
                     } catch (const std::exception& e) {
-                        std::cerr << "Handler error: " << e.what() << "\n";
+                        LOG_ERROR("Handler error: {}", e.what());
                     }
                 }
                 
@@ -103,7 +103,7 @@ void ClientSession::do_read_body(uint32_t body_length) {
                     do_read_header();
                 }
             } else {
-                std::cerr << "Read body error: " << ec.message() << "\n";
+                LOG_WARN("Read body error: {}", ec.message());
                 close();
             }
         });
@@ -131,7 +131,7 @@ void ClientSession::do_write(std::vector<uint8_t> response) {
                 // Continuar lendo próxima mensagem
                 do_read_header();
             } else {
-                std::cerr << "Write error: " << ec.message() << "\n";
+                LOG_WARN("Write error: {}", ec.message());
                 close();
             }
         });
@@ -164,7 +164,7 @@ void Server::start() {
         // Permitir reuso do endereço
         acceptor_->set_option(boost::asio::socket_base::reuse_address(true));
         
-        std::cout << "Server listening on port " << port_ << "\n";
+        LOG_INFO("Server listening on port {}", port_);
         
         do_accept();
         
@@ -175,7 +175,7 @@ void Server::start() {
                 try {
                     io_context_.run();
                 } catch (const std::exception& e) {
-                    std::cerr << "IO context error: " << e.what() << "\n";
+                    LOG_ERROR("IO context error: {}", e.what());
                 }
             });
         }
@@ -190,7 +190,7 @@ void Server::stop() {
         return; // Já está parado
     }
     
-    std::cout << "Stopping server...\n";
+    LOG_INFO("Stopping server...");
     
     // Fechar o acceptor
     if (acceptor_) {
@@ -220,7 +220,7 @@ void Server::stop() {
     }
     thread_pool_.clear();
     
-    std::cout << "Server stopped.\n";
+    LOG_INFO("Server stopped");
 }
 
 void Server::set_message_handler(MessageHandler handler) {
@@ -245,9 +245,9 @@ void Server::do_accept() {
     acceptor_->async_accept(
         [this](boost::system::error_code ec, tcp::socket socket) {
             if (!ec) {
-                std::cout << "New connection from: " 
-                          << socket.remote_endpoint().address().to_string() 
-                          << ":" << socket.remote_endpoint().port() << "\n";
+                LOG_DEBUG("New connection from: {}:{}",
+                          socket.remote_endpoint().address().to_string(),
+                          socket.remote_endpoint().port());
                 
                 // Configurar socket
                 socket.set_option(tcp::no_delay(true));
@@ -276,7 +276,7 @@ void Server::do_accept() {
                 
                 session->start();
             } else if (ec != boost::asio::error::operation_aborted) {
-                std::cerr << "Accept error: " << ec.message() << "\n";
+                LOG_ERROR("Accept error: {}", ec.message());
             }
             
             // Continuar aceitando conexões se ainda estiver rodando

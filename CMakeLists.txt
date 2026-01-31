@@ -74,11 +74,15 @@ find_package(Boost REQUIRED COMPONENTS system)
 # nlohmann_json (via vcpkg)
 find_package(nlohmann_json CONFIG REQUIRED)
 
+# spdlog (via vcpkg) - high-performance logging
+find_package(spdlog CONFIG REQUIRED)
+
 # ============================================================================
 # Biblioteca principal
 # ============================================================================
 
 add_library(eventhorizon_lib STATIC
+    src/logging/logger.cpp
     src/storage/log_segment.cpp
     src/storage/partition.cpp
     src/protocol/kafka_protocol.cpp
@@ -103,6 +107,7 @@ target_include_directories(eventhorizon_lib PUBLIC
 target_link_libraries(eventhorizon_lib PUBLIC
     Boost::system
     nlohmann_json::nlohmann_json
+    spdlog::spdlog
 )
 
 # Para Windows - link Ws2_32

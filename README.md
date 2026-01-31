@@ -202,6 +202,67 @@ Edit the `config.json` file:
 }
 ```
 
+## Logging
+
+Event Horizon uses [spdlog](https://github.com/gabime/spdlog) for high-performance structured logging.
+
+### Log Levels
+
+| Level | Description |
+|-------|-------------|
+| `trace` | Detailed protocol-level information (very verbose) |
+| `debug` | Debug information for development |
+| `info` | General operational messages (default) |
+| `warn` | Warning conditions |
+| `error` | Error conditions |
+| `critical` | Critical failures |
+
+### Command Line Options
+
+```bash
+# Run with default log level (info)
+./event_horizon -c config.json
+
+# Run with debug logging
+./event_horizon -c config.json --log-level debug
+
+# Run with trace logging (very verbose)
+./event_horizon -c config.json --log-level trace
+
+# Minimal logging (warnings and errors only)
+./event_horizon -c config.json --log-level warn
+```
+
+### Log Output
+
+Logs are written to both:
+
+- **Console**: Colored output for easy reading
+- **File**: Rotating log files in `logs/` directory
+  - Maximum file size: 10 MB
+  - Maximum files: 5 (automatic rotation)
+  - Location: `logs/eventhorizon.log`
+
+### Log Format
+
+```
+[2026-01-31 14:30:45.123] [info] [thread 12345] Server started on port 9092
+[2026-01-31 14:30:46.456] [debug] [thread 12346] Received Produce request for topic 'my-topic'
+```
+
+### Programmatic Usage
+
+The logging system can be used in code via macros:
+
+```cpp
+#include "logging/logger.hpp"
+
+LOG_INFO("Server started on port {}", port);
+LOG_DEBUG("Processing request from client {}", client_id);
+LOG_ERROR("Failed to write to partition: {}", error_message);
+LOG_TRACE("Raw bytes received: {} bytes", data.size());
+```
+
 ## Testing with Kafka Clients
 
 Event Horizon is compatible with standard Kafka clients:

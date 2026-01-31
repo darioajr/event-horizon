@@ -17,6 +17,10 @@
     {
       "name": "nlohmann-json",
       "version>=": "3.12.0"
+    },
+    {
+      "name": "spdlog",
+      "version>=": "1.14.0"
     }
   ],
   "overrides": [
