@@ -185,6 +185,205 @@ docker-compose down
 
 **Note:** Event Horizon must be running before starting Kafka UI.
 
+## Docker
+
+Event Horizon can be run as a Docker container, using the same base image as Confluent Kafka (Ubuntu 22.04).
+
+### Building the Docker Image
+
+```bash
+# Build for local architecture
+docker build -t eventhorizon:latest .
+
+# Build with specific version tag
+docker build -t eventhorizon:1.0.0 .
+
+# Multi-architecture build (x64 and ARM64)
+docker buildx create --use
+docker buildx build --platform linux/amd64,linux/arm64 -t eventhorizon:latest --push .
+```
+
+### Running with Docker
+
+```bash
+# Basic run
+docker run -d \
+    --name eventhorizon \
+    -p 9092:9092 \
+    eventhorizon:latest
+
+# With persistent data volume
+docker run -d \
+    --name eventhorizon \
+    -p 9092:9092 \
+    -v eventhorizon-data:/var/lib/eventhorizon \
+    eventhorizon:latest
+
+# With custom configuration
+docker run -d \
+    --name eventhorizon \
+    -p 9092:9092 \
+    -v eventhorizon-data:/var/lib/eventhorizon \
+    -v $(pwd)/config.json:/etc/eventhorizon/config.json:ro \
+    -e LOG_LEVEL=debug \
+    eventhorizon:latest
+
+# Run with all options
+docker run -d \
+    --name eventhorizon \
+    -p 9092:9092 \
+    -v eventhorizon-data:/var/lib/eventhorizon \
+    -v eventhorizon-logs:/var/log/eventhorizon \
+    -e BROKER_ID=0 \
+    -e BROKER_HOST=0.0.0.0 \
+    -e BROKER_PORT=9092 \
+    -e LOG_LEVEL=info \
+    --restart unless-stopped \
+    eventhorizon:latest
+```
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BROKER_ID` | `0` | Unique broker identifier |
+| `BROKER_HOST` | `0.0.0.0` | Host address to bind |
+| `BROKER_PORT` | `9092` | Port to listen on |
+| `LOG_LEVEL` | `info` | Log level: trace, debug, info, warn, error |
+
+### Docker Volumes
+
+| Path | Description |
+|------|-------------|
+| `/var/lib/eventhorizon` | Data directory (topics, partitions, logs) |
+| `/var/log/eventhorizon` | Application logs |
+| `/etc/eventhorizon` | Configuration files |
+
+### Docker Compose
+
+Add Event Horizon to your `docker-compose.yml`:
+
+```yaml
+version: '3.8'
+
+services:
+  eventhorizon:
+    build: .
+    # Or use pre-built image:
+    # image: eventhorizon:latest
+    container_name: eventhorizon
+    ports:
+      - "9092:9092"
+    environment:
+      BROKER_ID: 0
+      BROKER_HOST: 0.0.0.0
+      BROKER_PORT: 9092
+      LOG_LEVEL: info
+    volumes:
+      - eventhorizon-data:/var/lib/eventhorizon
+      - eventhorizon-logs:/var/log/eventhorizon
+      - ./config.json:/etc/eventhorizon/config.json:ro
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "9092"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    ports:
+      - "8080:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: event-horizon
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: eventhorizon:9092
+    depends_on:
+      eventhorizon:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  eventhorizon-data:
+  eventhorizon-logs:
+```
+
+Start the stack:
+
+```bash
+# Start all services
+docker-compose up -d
+
+# View logs
+docker-compose logs -f eventhorizon
+
+# Stop all services
+docker-compose down
+
+# Stop and remove volumes
+docker-compose down -v
+```
+
+### Docker Commands Reference
+
+```bash
+# View container logs
+docker logs -f eventhorizon
+
+# Execute command inside container
+docker exec -it eventhorizon /bin/bash
+
+# Check container health
+docker inspect --format='{{.State.Health.Status}}' eventhorizon
+
+# Stop container
+docker stop eventhorizon
+
+# Remove container
+docker rm eventhorizon
+
+# Remove image
+docker rmi eventhorizon:latest
+```
+
+### Production Recommendations
+
+1. **Use named volumes** for data persistence:
+   ```bash
+   docker volume create eventhorizon-data
+   ```
+
+2. **Set resource limits**:
+   ```yaml
+   deploy:
+     resources:
+       limits:
+         cpus: '2'
+         memory: 4G
+       reservations:
+         cpus: '1'
+         memory: 2G
+   ```
+
+3. **Use health checks** to ensure the broker is ready before dependent services start.
+
+4. **Configure logging driver** for production:
+   ```yaml
+   logging:
+     driver: "json-file"
+     options:
+       max-size: "100m"
+       max-file: "5"
+   ```
+
+5. **Network security**: In production, consider using Docker networks to isolate services:
+   ```yaml
+   networks:
+     eventhorizon-net:
+       driver: bridge
+   ```
+
 ## Configuration
 
 Edit the `config.json` file:

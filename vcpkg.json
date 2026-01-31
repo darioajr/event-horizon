@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Kafka-compatible Event Horizon in C++",
   "homepage": "https://github.com/yourusername/event-horizon",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "supports": "(windows & x64) | ((linux | osx) & (x64 | arm64))",
   "dependencies": [
     {
