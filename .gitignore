@@ -1,3 +1,30 @@
+# Build artifacts
+build/
+out/
+cmake-build-*/
+
+# IDE
+.vs/
+# .vscode/ - incluído no git para compartilhar configurações do projeto
+*.sln
+*.vcxproj
+*.vcxproj.*
+.idea/
+*.swp
+*.swo
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+CTestTestfile.cmake
+Testing/
+_deps/
+
+# vcpkg
+vcpkg_installed/
+
 # Prerequisites
 *.d
 
@@ -17,25 +44,34 @@
 # Debugger Files
 *.pdb
 
-# Compiled Dynamic libraries
+# Compiled binaries
+*.exe
+*.dll
 *.so
 *.dylib
-*.dll
+*.a
+*.lib
+*.out
+*.app
 
 # Fortran module files
 *.mod
 *.smod
 
-# Compiled Static libraries
-*.lai
-*.la
-*.a
-*.lib
-
-# Executables
-*.exe
-*.out
-*.app
-
-# debug information files
+# Debug information files
 *.dwo
+
+# Logs and data
+*.log
+data/
+logs/
+
+# OS specific
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+*~

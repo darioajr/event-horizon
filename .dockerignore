@@ -1,0 +1,30 @@
+# Build directories
+build/
+out/
+cmake-build-*/
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.vcxproj*
+*.sln*
+
+# Git
+.git/
+.github/
+
+# Test data
+test_data/
+data/
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Misc
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
