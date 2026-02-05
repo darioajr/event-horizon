@@ -421,6 +421,8 @@ public:
     void add_topic(const TopicInfo& topic);
     // Remove a topic from storage
     void remove_topic(std::string_view topic_name);
+    // Remove multiple topics from storage
+    void remove_stored_topics(const std::vector<std::string>& topic_names);
     // Get all stored topics
     [[nodiscard]] std::vector<TopicInfo> get_stored_topics() const;
 };

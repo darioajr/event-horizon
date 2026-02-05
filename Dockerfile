@@ -50,9 +50,9 @@ RUN git clone https://github.com/microsoft/vcpkg.git ${VCPKG_ROOT} \
 # Detectar arquitetura e definir triplet
 ARG TARGETARCH
 RUN if [ "$TARGETARCH" = "arm64" ]; then \
-        echo "arm64-linux" > /tmp/triplet; \
+    echo "arm64-linux" > /tmp/triplet; \
     else \
-        echo "x64-linux" > /tmp/triplet; \
+    echo "x64-linux" > /tmp/triplet; \
     fi
 
 # Copiar arquivos do projeto
@@ -63,13 +63,13 @@ COPY src/ ./src/
 # Instalar dependências via vcpkg e compilar
 RUN TRIPLET=$(cat /tmp/triplet) && \
     cmake -B build \
-        -G Ninja \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_TOOLCHAIN_FILE=${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake \
-        -DVCPKG_TARGET_TRIPLET=${TRIPLET} \
-        -DBUILD_TESTS=OFF \
-        -DVERSION_SUFFIX="" \
-        -DBUILD_NUMBER=${BUILD_NUMBER} \
+    -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_TOOLCHAIN_FILE=${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake \
+    -DVCPKG_TARGET_TRIPLET=${TRIPLET} \
+    -DBUILD_TESTS=OFF \
+    -DVERSION_SUFFIX="" \
+    -DBUILD_NUMBER=${BUILD_NUMBER} \
     && cmake --build build --config Release --parallel $(nproc)
 
 # -----------------------------------------------------------------------------
@@ -120,13 +120,13 @@ RUN groupadd --gid 1000 eventhorizon \
 
 # Criar diretórios
 RUN mkdir -p ${EVENT_HORIZON_HOME}/bin \
-             ${EVENT_HORIZON_DATA} \
-             ${EVENT_HORIZON_CONFIG} \
-             ${EVENT_HORIZON_LOGS} \
+    ${EVENT_HORIZON_DATA} \
+    ${EVENT_HORIZON_CONFIG} \
+    ${EVENT_HORIZON_LOGS} \
     && chown -R eventhorizon:eventhorizon ${EVENT_HORIZON_HOME} \
-                                           ${EVENT_HORIZON_DATA} \
-                                           ${EVENT_HORIZON_CONFIG} \
-                                           ${EVENT_HORIZON_LOGS}
+    ${EVENT_HORIZON_DATA} \
+    ${EVENT_HORIZON_CONFIG} \
+    ${EVENT_HORIZON_LOGS}
 
 # Copiar binário compilado
 COPY --from=builder /src/build/event_horizon ${EVENT_HORIZON_HOME}/bin/
@@ -134,36 +134,8 @@ COPY --from=builder /src/build/event_horizon ${EVENT_HORIZON_HOME}/bin/
 # Copiar configuração padrão (se existir)
 COPY --chown=eventhorizon:eventhorizon config.json ${EVENT_HORIZON_CONFIG}/config.json
 
-# Criar script de entrypoint
-RUN cat > ${EVENT_HORIZON_HOME}/bin/docker-entrypoint.sh << 'EOF'
-#!/bin/bash
-set -e
-
-# Variáveis com defaults
-BROKER_ID=${BROKER_ID:-0}
-BROKER_HOST=${BROKER_HOST:-0.0.0.0}
-BROKER_PORT=${BROKER_PORT:-9092}
-LOG_LEVEL=${LOG_LEVEL:-info}
-DATA_DIR=${EVENT_HORIZON_DATA:-/var/lib/eventhorizon}
-CONFIG_FILE=${EVENT_HORIZON_CONFIG}/config.json
-
-# Criar diretório de dados se não existir
-mkdir -p "${DATA_DIR}"
-
-echo "Starting Event Horizon..."
-echo "  Broker ID: ${BROKER_ID}"
-echo "  Host: ${BROKER_HOST}"
-echo "  Port: ${BROKER_PORT}"
-echo "  Data Dir: ${DATA_DIR}"
-echo "  Log Level: ${LOG_LEVEL}"
-
-exec ${EVENT_HORIZON_HOME}/bin/event_horizon \
-    --config "${CONFIG_FILE}" \
-    --port "${BROKER_PORT}" \
-    --data "${DATA_DIR}" \
-    --log-level "${LOG_LEVEL}" \
-    "$@"
-EOF
+# Copiar script de entrypoint
+COPY --chown=eventhorizon:eventhorizon docker-entrypoint.sh ${EVENT_HORIZON_HOME}/bin/docker-entrypoint.sh
 
 RUN chmod +x ${EVENT_HORIZON_HOME}/bin/docker-entrypoint.sh \
     && ln -s ${EVENT_HORIZON_HOME}/bin/event_horizon /usr/local/bin/event_horizon \

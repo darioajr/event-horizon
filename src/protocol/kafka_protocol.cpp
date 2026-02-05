@@ -553,6 +553,15 @@ void KafkaProtocolHandler::remove_topic(std::string_view topic_name) {
     });
 }
 
+void KafkaProtocolHandler::remove_stored_topics(const std::vector<std::string>& topic_names) {
+    std::lock_guard lock(topics_mutex_);
+    for (const auto& name : topic_names) {
+        std::erase_if(stored_topics_, [&name](const TopicInfo& t) {
+            return t.name == name;
+        });
+    }
+}
+
 std::vector<TopicInfo> KafkaProtocolHandler::get_stored_topics() const {
     std::lock_guard lock(topics_mutex_);
     return stored_topics_;

@@ -236,6 +236,18 @@ void Broker::register_protocol_handlers() {
         [this](const RequestHeader& header, BufferReader& reader, BufferWriter& writer) {
             return handle_metadata_request(header, reader);
         });
+    
+    // Handler para DeleteTopics (Kafka UI delete topic)
+    protocol_handler_->register_handler(ApiKey::DeleteTopics,
+        [this](const RequestHeader& header, BufferReader& reader, BufferWriter& writer) {
+            return handle_delete_topics_request(header, reader);
+        });
+    
+    // Handler para DeleteRecords (Kafka UI clear messages)
+    protocol_handler_->register_handler(ApiKey::DeleteRecords,
+        [this](const RequestHeader& header, BufferReader& reader, BufferWriter& writer) {
+            return handle_delete_records_request(header, reader);
+        });
 }
 
 void Broker::load_topics() {
@@ -1800,6 +1812,336 @@ std::vector<uint8_t> Broker::handle_metadata_request(
     }
     
     // Tagged fields no final (flexible)
+    if (flexible) {
+        writer.write_unsigned_varint(0);
+    }
+    
+    return writer.data();
+}
+
+// ============================================================================
+// DeleteTopics Request Handler
+// ============================================================================
+std::vector<uint8_t> Broker::handle_delete_topics_request(
+    const protocol::RequestHeader& header, protocol::BufferReader& reader) {
+    
+    using namespace protocol;
+    
+    // v4+ uses flexible format
+    bool flexible = (header.api_version >= 4);
+    
+    std::vector<std::string> topic_names;
+    
+    if (flexible) {
+        // Skip leading 0x00 byte if present (workaround)
+        const uint8_t* ptr = reader.current();
+        size_t rem = reader.remaining();
+        if (rem >= 2 && ptr[0] == 0x00 && ptr[1] >= 0x01 && ptr[1] <= 0x20) {
+            reader.skip(1);
+        }
+        
+        // COMPACT_ARRAY of topics
+        uint32_t topic_count = reader.read_unsigned_varint();
+        if (topic_count > 0) {
+            topic_count--; // compact array uses length + 1
+            for (uint32_t i = 0; i < topic_count; ++i) {
+                // Topic name (compact string)
+                std::string topic_name = reader.read_compact_string();
+                topic_names.push_back(topic_name);
+                
+                // Tagged fields for each topic entry
+                reader.read_unsigned_varint();
+            }
+        }
+        
+        // timeout_ms
+        reader.read_int32();
+        
+        // Tagged fields at end of request
+        reader.read_unsigned_varint();
+    } else {
+        // Non-flexible format
+        int32_t topic_count = reader.read_int32();
+        for (int32_t i = 0; i < topic_count; ++i) {
+            topic_names.push_back(reader.read_string());
+        }
+        
+        // timeout
+        reader.read_int32();
+    }
+    
+    // Delete topics and their data
+    std::vector<std::pair<std::string, ErrorCode>> results;
+    for (const auto& name : topic_names) {
+        try {
+            delete_topic(name, true);
+            results.push_back({name, ErrorCode::None});
+            LOG_INFO("Deleted topic: {}", name);
+        } catch (const std::exception& e) {
+            LOG_WARN("Failed to delete topic {}: {}", name, e.what());
+            results.push_back({name, ErrorCode::UnknownTopicOrPartition});
+        }
+    }
+    
+    // Also remove from protocol handler's stored_topics
+    protocol_handler_->remove_stored_topics(topic_names);
+    
+    BufferWriter writer;
+    writer.write_int32(header.correlation_id);
+    
+    if (flexible) {
+        // Header tagged fields
+        writer.write_unsigned_varint(0);
+    }
+    
+    // Throttle time (v1+)
+    if (header.api_version >= 1) {
+        writer.write_int32(0);
+    }
+    
+    // Topics response array
+    if (flexible) {
+        writer.write_unsigned_varint(static_cast<uint32_t>(results.size() + 1));
+    } else {
+        writer.write_int32(static_cast<int32_t>(results.size()));
+    }
+    
+    for (const auto& [topic_name, error_code] : results) {
+        if (flexible) {
+            // Topic name (compact string)
+            writer.write_unsigned_varint(static_cast<uint32_t>(topic_name.size() + 1));
+            for (char c : topic_name) writer.write_int8(static_cast<int8_t>(c));
+        } else {
+            writer.write_string(topic_name);
+        }
+        
+        // Topic ID (v6+) - 16 bytes UUID
+        if (header.api_version >= 6) {
+            for (int i = 0; i < 16; i++) writer.write_int8(0);
+        }
+        
+        // Error code
+        writer.write_int16(static_cast<int16_t>(error_code));
+        
+        // Error message (v5+, nullable compact string)
+        if (header.api_version >= 5) {
+            if (flexible) {
+                writer.write_unsigned_varint(0); // null
+            } else {
+                writer.write_int16(-1); // null
+            }
+        }
+        
+        // Tagged fields for each topic (flexible)
+        if (flexible) {
+            writer.write_unsigned_varint(0);
+        }
+    }
+    
+    // Tagged fields at end (flexible)
+    if (flexible) {
+        writer.write_unsigned_varint(0);
+    }
+    
+    return writer.data();
+}
+
+// ============================================================================
+// DeleteRecords Request Handler
+// ============================================================================
+std::vector<uint8_t> Broker::handle_delete_records_request(
+    const protocol::RequestHeader& header, protocol::BufferReader& reader) {
+    
+    using namespace protocol;
+    
+    // v1+ uses flexible format in Kafka 4.1
+    bool flexible = (header.api_version >= 1);
+    
+    struct PartitionRequest {
+        int32_t partition_id;
+        int64_t offset;  // -1 means high watermark (delete all)
+    };
+    
+    struct TopicRequest {
+        std::string name;
+        std::vector<PartitionRequest> partitions;
+    };
+    
+    std::vector<TopicRequest> topics;
+    
+    // Parse request
+    if (flexible) {
+        // Skip leading 0x00 if present (workaround for some clients)
+        const uint8_t* ptr = reader.current();
+        if (reader.remaining() >= 2 && ptr[0] == 0x00 && ptr[1] >= 0x01 && ptr[1] <= 0x40) {
+            reader.skip(1);
+        }
+        
+        // COMPACT_ARRAY of topics
+        uint32_t topic_count = reader.read_unsigned_varint();
+        if (topic_count > 0) {
+            topic_count--;  // compact array uses length + 1
+            topics.reserve(topic_count);
+            
+            for (uint32_t i = 0; i < topic_count; ++i) {
+                TopicRequest topic;
+                topic.name = reader.read_compact_string();
+                
+                // COMPACT_ARRAY of partitions
+                uint32_t partition_count = reader.read_unsigned_varint();
+                if (partition_count > 0) {
+                    partition_count--;
+                    topic.partitions.reserve(partition_count);
+                    
+                    for (uint32_t j = 0; j < partition_count; ++j) {
+                        PartitionRequest part;
+                        part.partition_id = reader.read_int32();
+                        part.offset = reader.read_int64();
+                        
+                        // Tagged fields per partition
+                        reader.read_unsigned_varint();
+                        
+                        topic.partitions.push_back(part);
+                    }
+                }
+                
+                // Tagged fields per topic
+                reader.read_unsigned_varint();
+                
+                topics.push_back(std::move(topic));
+            }
+        }
+        
+        // timeout_ms
+        reader.read_int32();
+        
+        // Tagged fields at end
+        reader.read_unsigned_varint();
+    } else {
+        // Non-flexible format (v0)
+        int32_t topic_count = reader.read_int32();
+        topics.reserve(topic_count);
+        
+        for (int32_t i = 0; i < topic_count; ++i) {
+            TopicRequest topic;
+            topic.name = reader.read_string();
+            
+            int32_t partition_count = reader.read_int32();
+            topic.partitions.reserve(partition_count);
+            
+            for (int32_t j = 0; j < partition_count; ++j) {
+                PartitionRequest part;
+                part.partition_id = reader.read_int32();
+                part.offset = reader.read_int64();
+                topic.partitions.push_back(part);
+            }
+            
+            topics.push_back(std::move(topic));
+        }
+        
+        // timeout
+        reader.read_int32();
+    }
+    
+    // Process delete records
+    struct PartitionResult {
+        int32_t partition_id;
+        int64_t low_watermark;
+        ErrorCode error_code;
+    };
+    
+    struct TopicResult {
+        std::string name;
+        std::vector<PartitionResult> partitions;
+    };
+    
+    std::vector<TopicResult> results;
+    
+    for (const auto& topic_req : topics) {
+        TopicResult topic_result;
+        topic_result.name = topic_req.name;
+        
+        for (const auto& part_req : topic_req.partitions) {
+            PartitionResult part_result;
+            part_result.partition_id = part_req.partition_id;
+            
+            try {
+                // offset -1 means delete to high watermark (all messages)
+                int64_t target_offset = part_req.offset;
+                if (target_offset == -1) {
+                    target_offset = std::numeric_limits<int64_t>::max();
+                }
+                
+                part_result.low_watermark = delete_records(topic_req.name, part_req.partition_id, target_offset);
+                part_result.error_code = ErrorCode::None;
+                LOG_INFO("Deleted records from topic {} partition {} before offset {}",
+                         topic_req.name, part_req.partition_id, target_offset);
+            } catch (const std::exception& e) {
+                LOG_WARN("Failed to delete records from {} partition {}: {}", 
+                         topic_req.name, part_req.partition_id, e.what());
+                part_result.low_watermark = -1;
+                part_result.error_code = ErrorCode::UnknownTopicOrPartition;
+            }
+            
+            topic_result.partitions.push_back(part_result);
+        }
+        
+        results.push_back(std::move(topic_result));
+    }
+    
+    // Build response
+    BufferWriter writer;
+    writer.write_int32(header.correlation_id);
+    
+    if (flexible) {
+        // Header tagged fields
+        writer.write_unsigned_varint(0);
+    }
+    
+    // Throttle time
+    writer.write_int32(0);
+    
+    // Topics response array
+    if (flexible) {
+        writer.write_unsigned_varint(static_cast<uint32_t>(results.size() + 1));
+    } else {
+        writer.write_int32(static_cast<int32_t>(results.size()));
+    }
+    
+    for (const auto& topic_result : results) {
+        // Topic name
+        if (flexible) {
+            writer.write_unsigned_varint(static_cast<uint32_t>(topic_result.name.size() + 1));
+            for (char c : topic_result.name) writer.write_int8(static_cast<int8_t>(c));
+        } else {
+            writer.write_string(topic_result.name);
+        }
+        
+        // Partitions response array
+        if (flexible) {
+            writer.write_unsigned_varint(static_cast<uint32_t>(topic_result.partitions.size() + 1));
+        } else {
+            writer.write_int32(static_cast<int32_t>(topic_result.partitions.size()));
+        }
+        
+        for (const auto& part_result : topic_result.partitions) {
+            writer.write_int32(part_result.partition_id);
+            writer.write_int64(part_result.low_watermark);
+            writer.write_int16(static_cast<int16_t>(part_result.error_code));
+            
+            // Tagged fields per partition (flexible)
+            if (flexible) {
+                writer.write_unsigned_varint(0);
+            }
+        }
+        
+        // Tagged fields per topic (flexible)
+        if (flexible) {
+            writer.write_unsigned_varint(0);
+        }
+    }
+    
+    // Tagged fields at end (flexible)
     if (flexible) {
         writer.write_unsigned_varint(0);
     }

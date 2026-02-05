@@ -1,0 +1,40 @@
+{
+    "recommendations": [
+        // C++ Development
+        "ms-vscode.cpptools",
+        "ms-vscode.cpptools-extension-pack",
+        "ms-vscode.cpptools-themes",
+        "jeff-hykin.better-cpp-syntax",
+        
+        // CMake
+        "ms-vscode.cmake-tools",
+        "twxs.cmake",
+        
+        // Formatting & Linting
+        "xaver.clang-format",
+        "cschlosser.doxdocgen",
+        
+        // Testing
+        "matepek.vscode-catch2-test-adapter",
+        
+        // Docker & DevContainers
+        "ms-azuretools.vscode-docker",
+        "ms-vscode-remote.remote-containers",
+        
+        // Git
+        "eamodio.gitlens",
+        "mhutchie.git-graph",
+        
+        // YAML (GitHub Actions)
+        "redhat.vscode-yaml",
+        
+        // Markdown
+        "yzhang.markdown-all-in-one",
+        "DavidAnson.vscode-markdownlint",
+        
+        // General Productivity
+        "EditorConfig.EditorConfig",
+        "streetsidesoftware.code-spell-checker"
+    ],
+    "unwantedRecommendations": []
+}

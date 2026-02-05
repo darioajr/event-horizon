@@ -163,6 +163,10 @@ private:
         const protocol::RequestHeader& header, protocol::BufferReader& reader);
     std::vector<uint8_t> handle_metadata_request(
         const protocol::RequestHeader& header, protocol::BufferReader& reader);
+    std::vector<uint8_t> handle_delete_topics_request(
+        const protocol::RequestHeader& header, protocol::BufferReader& reader);
+    std::vector<uint8_t> handle_delete_records_request(
+        const protocol::RequestHeader& header, protocol::BufferReader& reader);
     
     BrokerConfig config_;
     std::atomic<bool> running_{false};

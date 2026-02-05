@@ -1,0 +1,92 @@
+{
+    "name": "Event Horizon - Linux Dev",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "context": ".."
+    },
+    "runArgs": [
+        "--cap-add=SYS_PTRACE",
+        "--security-opt",
+        "seccomp=unconfined"
+    ],
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                // C++ Development
+                "ms-vscode.cpptools",
+                "ms-vscode.cpptools-extension-pack",
+                "ms-vscode.cpptools-themes",
+                "jeff-hykin.better-cpp-syntax",
+                
+                // CMake
+                "ms-vscode.cmake-tools",
+                "twxs.cmake",
+                
+                // Formatting & Documentation
+                "xaver.clang-format",
+                "cschlosser.doxdocgen",
+                
+                // Testing
+                "matepek.vscode-catch2-test-adapter",
+                
+                // Debugging (Linux)
+                "vadimcn.vscode-lldb",
+                
+                // Git
+                "eamodio.gitlens",
+                "mhutchie.git-graph",
+                
+                // YAML (GitHub Actions)
+                "redhat.vscode-yaml",
+                
+                // Markdown
+                "yzhang.markdown-all-in-one",
+                "DavidAnson.vscode-markdownlint",
+                
+                // General Productivity
+                "EditorConfig.EditorConfig",
+                "streetsidesoftware.code-spell-checker"
+            ],
+            "settings": {
+                "cmake.configureOnOpen": true,
+                "cmake.generator": "Ninja",
+                "cmake.configureSettings": {
+                    "CMAKE_TOOLCHAIN_FILE": "/vcpkg/scripts/buildsystems/vcpkg.cmake"
+                },
+                "cmake.buildDirectory": "${workspaceFolder}/build/linux-debug",
+                "cmake.configureArgs": [
+                    "--preset=linux-debug"
+                ],
+                "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+                "C_Cpp.default.compileCommands": "${workspaceFolder}/build/linux-debug/compile_commands.json",
+                "C_Cpp.formatting": "clangFormat",
+                "editor.formatOnSave": true,
+                "files.associations": {
+                    "*.h": "cpp",
+                    "*.hpp": "cpp"
+                },
+                "terminal.integrated.defaultProfile.linux": "bash"
+            }
+        }
+    },
+    "features": {
+        "ghcr.io/devcontainers/features/github-cli:1": {}
+    },
+    // "mounts": [
+    //     "source=${localEnv:USERPROFILE}/.ssh,target=/home/vscode/.ssh,type=bind,readonly"
+    // ],
+    "postCreateCommand": "bash .devcontainer/post-create.sh",
+    "remoteUser": "vscode",
+    "containerEnv": {
+        "VCPKG_ROOT": "/vcpkg"
+    },
+    "forwardPorts": [
+        9092
+    ],
+    "portsAttributes": {
+        "9092": {
+            "label": "Kafka Protocol",
+            "onAutoForward": "notify"
+        }
+    }
+}

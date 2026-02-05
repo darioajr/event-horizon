@@ -1,0 +1,140 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Configure Debug",
+            "type": "shell",
+            "command": "cmake",
+            "args": ["--preset", "linux-debug"],
+            "group": "build",
+            "problemMatcher": "$gcc"
+        },
+        {
+            "label": "Configure Release",
+            "type": "shell",
+            "command": "cmake",
+            "args": ["--preset", "linux-release"],
+            "group": "build",
+            "problemMatcher": "$gcc"
+        },
+        {
+            "label": "Configure Coverage",
+            "type": "shell",
+            "command": "cmake",
+            "args": ["--preset", "linux-coverage"],
+            "group": "build",
+            "problemMatcher": "$gcc"
+        },
+        {
+            "label": "Build Debug",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build",
+                "${workspaceFolder}/build/linux-debug",
+                "--parallel"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": "$gcc",
+            "dependsOn": "Configure Debug"
+        },
+        {
+            "label": "Build Release",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build",
+                "${workspaceFolder}/build/linux-release",
+                "--parallel"
+            ],
+            "group": "build",
+            "problemMatcher": "$gcc",
+            "dependsOn": "Configure Release"
+        },
+        {
+            "label": "Run Tests (Debug)",
+            "type": "shell",
+            "command": "${workspaceFolder}/build/linux-debug/eventhorizon_tests",
+            "args": ["--gtest_color=yes"],
+            "group": {
+                "kind": "test",
+                "isDefault": true
+            },
+            "problemMatcher": "$gcc",
+            "dependsOn": "Build Debug"
+        },
+        {
+            "label": "Run Tests (Release)",
+            "type": "shell",
+            "command": "${workspaceFolder}/build/linux-release/eventhorizon_tests",
+            "args": ["--gtest_color=yes"],
+            "group": "test",
+            "problemMatcher": "$gcc",
+            "dependsOn": "Build Release"
+        },
+        {
+            "label": "Run with Valgrind",
+            "type": "shell",
+            "command": "valgrind",
+            "args": [
+                "--leak-check=full",
+                "--show-leak-kinds=all",
+                "--track-origins=yes",
+                "${workspaceFolder}/build/linux-debug/eventhorizon_tests",
+                "--gtest_color=yes"
+            ],
+            "group": "test",
+            "problemMatcher": [],
+            "dependsOn": "Build Debug"
+        },
+        {
+            "label": "Run Coverage",
+            "type": "shell",
+            "command": "bash",
+            "args": [
+                "-c",
+                "cmake --build build/linux-coverage --parallel && ./build/linux-coverage/eventhorizon_tests && gcovr -r . --html --html-details -o coverage.html"
+            ],
+            "group": "test",
+            "problemMatcher": "$gcc",
+            "dependsOn": "Configure Coverage"
+        },
+        {
+            "label": "Clean Debug",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build",
+                "${workspaceFolder}/build/linux-debug",
+                "--target",
+                "clean"
+            ],
+            "problemMatcher": []
+        },
+        {
+            "label": "Clean Release",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build",
+                "${workspaceFolder}/build/linux-release",
+                "--target",
+                "clean"
+            ],
+            "problemMatcher": []
+        },
+        {
+            "label": "Run Event Horizon",
+            "type": "shell",
+            "command": "${workspaceFolder}/build/linux-debug/event_horizon",
+            "args": ["--config", "${workspaceFolder}/config.json"],
+            "group": "none",
+            "isBackground": true,
+            "problemMatcher": [],
+            "dependsOn": "Build Debug"
+        }
+    ]
+}

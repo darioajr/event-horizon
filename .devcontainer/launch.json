@@ -1,0 +1,94 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug Event Horizon",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/linux-debug/event_horizon",
+            "args": ["--config", "${workspaceFolder}/config.json"],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Ativar pretty-printing para gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "Definir sabor de desmontagem para Intel",
+                    "text": "-gdb-set disassembly-flavor intel",
+                    "ignoreFailures": true
+                }
+            ],
+            "preLaunchTask": "Build Debug",
+            "miDebuggerPath": "/usr/bin/gdb"
+        },
+        {
+            "name": "Debug Tests",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/linux-debug/eventhorizon_tests",
+            "args": ["--gtest_color=yes"],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Ativar pretty-printing para gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ],
+            "preLaunchTask": "Build Debug",
+            "miDebuggerPath": "/usr/bin/gdb"
+        },
+        {
+            "name": "Debug Test (Current File)",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/linux-debug/eventhorizon_tests",
+            "args": [
+                "--gtest_filter=${fileBasenameNoExtension}.*",
+                "--gtest_color=yes"
+            ],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Ativar pretty-printing para gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ],
+            "preLaunchTask": "Build Debug",
+            "miDebuggerPath": "/usr/bin/gdb"
+        },
+        {
+            "name": "LLDB Debug Event Horizon",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/linux-debug/event_horizon",
+            "args": ["--config", "${workspaceFolder}/config.json"],
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "Build Debug"
+        },
+        {
+            "name": "LLDB Debug Tests",
+            "type": "lldb",
+            "request": "launch",
+            "program": "${workspaceFolder}/build/linux-debug/eventhorizon_tests",
+            "args": ["--gtest_color=yes"],
+            "cwd": "${workspaceFolder}",
+            "preLaunchTask": "Build Debug"
+        }
+    ]
+}

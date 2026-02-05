@@ -5,7 +5,13 @@
             "label": "Configure Debug",
             "type": "shell",
             "command": "cmake",
-            "args": ["--preset", "windows-debug"],
+            "args": ["--preset", "${command:cmake.buildKit}"],
+            "windows": {
+                "args": ["--preset", "windows-debug"]
+            },
+            "linux": {
+                "args": ["--preset", "linux-debug"]
+            },
             "group": "build",
             "problemMatcher": "$msCompile"
         },

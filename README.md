@@ -15,9 +15,28 @@ A Kafka protocol-compatible event storage service, inspired by MapR Event Horizo
 ## Requirements
 
 - CMake 3.16+
-- C++23 compiler (GCC 13+, Clang 17+, MSVC 2022+)
+- C++23 compiler (GCC 13+, Clang 17+, MSVC 2026+)
 - vcpkg (package manager)
 - Ninja (optional, recommended for Linux/macOS)
+
+### Windows Build Tools (sem Visual Studio IDE)
+
+No Windows, você pode usar apenas o **Build Tools** em vez do Visual Studio completo:
+
+```powershell
+# Instalar CMake
+winget install Kitware.CMake
+
+# Instalar Visual Studio Build Tools 2026 (apenas compilador, ~3-5GB)
+winget install Microsoft.VisualStudio.BuildTools --override "--add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.CMake.Project --passive"
+```
+
+Isso instala:
+- CMake (ferramenta de build)
+- Compilador MSVC (cl.exe)
+- MSBuild e ferramentas de build
+
+> **Nota:** Não é necessário instalar o Visual Studio IDE completo (~15-20GB).
 
 ## Supported Platforms
 
@@ -192,7 +211,7 @@ Event Horizon can be run as a Docker container, using the same base image as Con
 ### Building the Docker Image
 
 ```bash
-# Build for local architecture
+# Build for local architecture (linux/amd64)
 docker build -t eventhorizon:latest .
 
 # Build with specific version tag
@@ -201,6 +220,32 @@ docker build -t eventhorizon:1.0.0 .
 # Multi-architecture build (x64 and ARM64)
 docker buildx create --use
 docker buildx build --platform linux/amd64,linux/arm64 -t eventhorizon:latest --push .
+```
+
+### Publishing to DockerHub
+
+```bash
+# Login no DockerHub
+docker login
+
+# Build e tag com seu usuário DockerHub
+docker build -t <seu-usuario>/eventhorizon:latest .
+docker build -t <seu-usuario>/eventhorizon:1.0.0 .
+
+# Push para DockerHub
+docker push <seu-usuario>/eventhorizon:latest
+docker push <seu-usuario>/eventhorizon:1.0.0
+
+# Multi-architecture build direto para DockerHub (x64 + ARM64)
+docker buildx create --name multiarch --use
+docker buildx build \
+    --platform linux/amd64,linux/arm64 \
+    -t <seu-usuario>/eventhorizon:latest \
+    -t <seu-usuario>/eventhorizon:1.0.0 \
+    --push .
+```
+
+> **Nota:** Substitua `<seu-usuario>` pelo seu username no DockerHub.
 ```
 
 ### Running with Docker
