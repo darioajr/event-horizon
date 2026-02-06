@@ -10,6 +10,16 @@ sudo chown -R vscode:vscode /workspaces/eventhorizon 2>/dev/null || true
 
 # Configurar Git
 git config --global --add safe.directory /workspaces/eventhorizon
+git config --global core.autocrlf input
+
+# Corrigir permissões do SSH (se montado)
+if [ -d "/home/vscode/.ssh" ]; then
+    echo "Corrigindo permissões SSH..."
+    sudo chown -R vscode:vscode /home/vscode/.ssh 2>/dev/null || true
+    chmod 700 /home/vscode/.ssh 2>/dev/null || true
+    chmod 600 /home/vscode/.ssh/* 2>/dev/null || true
+    chmod 644 /home/vscode/.ssh/*.pub 2>/dev/null || true
+fi
 
 # Corrigir permissões do vcpkg
 echo "Corrigindo permissões do vcpkg..."
