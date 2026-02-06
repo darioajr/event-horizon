@@ -15,10 +15,17 @@ git config --global core.autocrlf input
 # Corrigir permissões do SSH (se montado)
 if [ -d "/home/vscode/.ssh" ]; then
     echo "Corrigindo permissões SSH..."
-    sudo chown -R vscode:vscode /home/vscode/.ssh 2>/dev/null || true
-    chmod 700 /home/vscode/.ssh 2>/dev/null || true
-    chmod 600 /home/vscode/.ssh/* 2>/dev/null || true
-    chmod 644 /home/vscode/.ssh/*.pub 2>/dev/null || true
+    # Copiar SSH para evitar problemas de permissões com bind mount
+    cp -r /home/vscode/.ssh /tmp/.ssh-copy
+    sudo rm -rf /home/vscode/.ssh
+    sudo mv /tmp/.ssh-copy /home/vscode/.ssh
+    sudo chown -R vscode:vscode /home/vscode/.ssh
+    chmod 700 /home/vscode/.ssh
+    find /home/vscode/.ssh -type f -exec chmod 600 {} \;
+    find /home/vscode/.ssh -name "*.pub" -exec chmod 644 {} \;
+    if [ -f "/home/vscode/.ssh/config" ]; then
+        chmod 600 /home/vscode/.ssh/config
+    fi
 fi
 
 # Corrigir permissões do vcpkg
