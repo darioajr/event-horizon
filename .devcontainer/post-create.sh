@@ -11,9 +11,13 @@ sudo chown -R vscode:vscode /workspaces/eventhorizon 2>/dev/null || true
 # Configurar Git
 git config --global --add safe.directory /workspaces/eventhorizon
 
+# Corrigir permissões do vcpkg
+echo "Corrigindo permissões do vcpkg..."
+sudo chown -R $(whoami) /vcpkg
+
 # Atualizar vcpkg para versão mais recente
 echo "Atualizando vcpkg..."
-cd /vcpkg && git pull && ./bootstrap-vcpkg.sh
+cd /vcpkg && git checkout master && git pull origin master && ./bootstrap-vcpkg.sh
 cd /workspaces/eventhorizon
 
 # Instalar/atualizar dependências do vcpkg se necessário
