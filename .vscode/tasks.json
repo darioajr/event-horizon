@@ -20,6 +20,12 @@
             "type": "shell",
             "command": "cmake",
             "args": ["--preset", "windows-release"],
+            "windows": {
+                "args": ["--preset", "windows-release"]
+            },
+            "linux": {
+                "args": ["--preset", "linux-release"]
+            },
             "group": "build",
             "problemMatcher": "$msCompile"
         },
@@ -34,6 +40,24 @@
                 "Debug",
                 "--parallel"
             ],
+            "windows": {
+                "args": [
+                    "--build",
+                    "${workspaceFolder}/build/windows-debug",
+                    "--config",
+                    "Debug",
+                    "--parallel"
+                ]
+            },
+            "linux": {
+                "args": [
+                    "--build",
+                    "${workspaceFolder}/build/linux-debug",
+                    "--config",
+                    "Debug",
+                    "--parallel"
+                ]
+            },
             "group": {
                 "kind": "build",
                 "isDefault": true
@@ -52,6 +76,24 @@
                 "Release",
                 "--parallel"
             ],
+            "windows": {
+                "args": [
+                    "--build",
+                    "${workspaceFolder}/build/windows-release",
+                    "--config",
+                    "Release",
+                    "--parallel"
+                ]
+            },
+            "linux": {
+                "args": [
+                    "--build",
+                    "${workspaceFolder}/build/linux-release",
+                    "--config",
+                    "Release",
+                    "--parallel"
+                ]
+            },
             "group": "build",
             "problemMatcher": "$msCompile",
             "dependsOn": "Configure Release"
@@ -61,6 +103,12 @@
             "type": "shell",
             "command": "${workspaceFolder}/build/windows-debug/Debug/eventhorizon_tests.exe",
             "args": ["--gtest_color=yes"],
+            "windows": {
+                "command": "${workspaceFolder}/build/windows-debug/Debug/eventhorizon_tests.exe"
+            },
+            "linux": {
+                "command": "${workspaceFolder}/build/linux-debug/eventhorizon_tests"
+            },
             "group": "test",
             "problemMatcher": "$msCompile",
             "dependsOn": "Build Debug"
@@ -70,6 +118,12 @@
             "type": "shell",
             "command": "${workspaceFolder}/build/windows-release/Release/eventhorizon_tests.exe",
             "args": ["--gtest_color=yes"],
+            "windows": {
+                "command": "${workspaceFolder}/build/windows-release/Release/eventhorizon_tests.exe"
+            },
+            "linux": {
+                "command": "${workspaceFolder}/build/linux-release/eventhorizon_tests"
+            },
             "group": "test",
             "problemMatcher": "$msCompile",
             "dependsOn": "Build Release"
@@ -84,6 +138,22 @@
                 "--target",
                 "clean"
             ],
+            "windows": {
+                "args": [
+                    "--build",
+                    "${workspaceFolder}/build/windows-debug",
+                    "--target",
+                    "clean"
+                ]
+            },
+            "linux": {
+                "args": [
+                    "--build",
+                    "${workspaceFolder}/build/linux-debug",
+                    "--target",
+                    "clean"
+                ]
+            },
             "problemMatcher": []
         },
         {
@@ -96,6 +166,22 @@
                 "--target",
                 "clean"
             ],
+            "windows": {
+                "args": [
+                    "--build",
+                    "${workspaceFolder}/build/windows-release",
+                    "--target",
+                    "clean"
+                ]
+            },
+            "linux": {
+                "args": [
+                    "--build",
+                    "${workspaceFolder}/build/linux-release",
+                    "--target",
+                    "clean"
+                ]
+            },
             "problemMatcher": []
         }
     ]
