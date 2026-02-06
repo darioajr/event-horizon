@@ -6,5 +6,5 @@
     "num_partitions": 3,
     "port": 9092,
     "replication_factor": 1,
-    "thread_pool_size": 4
+    "thread_pool_size": 8
 }

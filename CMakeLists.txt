@@ -71,7 +71,7 @@ endif()
 # ============================================================================
 
 # Boost (via vcpkg)
-find_package(Boost REQUIRED COMPONENTS system)
+find_package(Boost REQUIRED COMPONENTS system iostreams)
 
 # nlohmann_json (via vcpkg)
 find_package(nlohmann_json CONFIG REQUIRED)
@@ -108,6 +108,7 @@ target_include_directories(eventhorizon_lib PUBLIC
 
 target_link_libraries(eventhorizon_lib PUBLIC
     Boost::system
+    Boost::iostreams
     nlohmann_json::nlohmann_json
     spdlog::spdlog
 )

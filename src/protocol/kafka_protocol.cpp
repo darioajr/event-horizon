@@ -207,6 +207,29 @@ std::vector<uint8_t> BufferReader::read_compact_nullable_bytes() {
     return result;
 }
 
+std::span<const uint8_t> BufferReader::read_nullable_bytes_view() {
+    int32_t length = read_int32();
+    if (length < 0) {
+        return {}; // null bytes
+    }
+    check_remaining(static_cast<size_t>(length));
+    std::span<const uint8_t> result(data_ + pos_, static_cast<size_t>(length));
+    pos_ += length;
+    return result;
+}
+
+std::span<const uint8_t> BufferReader::read_compact_nullable_bytes_view() {
+    uint32_t length = read_unsigned_varint();
+    if (length == 0) {
+        return {}; // null bytes
+    }
+    length -= 1;
+    check_remaining(length);
+    std::span<const uint8_t> result(data_ + pos_, length);
+    pos_ += length;
+    return result;
+}
+
 bool BufferReader::read_bool() {
     return read_int8() != 0;
 }
@@ -530,6 +553,10 @@ void KafkaProtocolHandler::set_groups_callback(GroupsCallback callback) {
     groups_callback_ = std::move(callback);
 }
 
+void KafkaProtocolHandler::set_create_topic_callback(CreateTopicCallback callback) {
+    create_topic_callback_ = std::move(callback);
+}
+
 void KafkaProtocolHandler::set_consumer_group_manager(ConsumerGroupManager* manager) {
     consumer_group_manager_ = manager;
 }
@@ -543,6 +570,11 @@ void KafkaProtocolHandler::add_topic(const TopicInfo& topic) {
         return;
     }
     stored_topics_.push_back(topic);
+    
+    // Call broker to create physical partitions
+    if (create_topic_callback_) {
+        create_topic_callback_(topic.name, topic.num_partitions, topic.replication_factor);
+    }
 }
 
 void KafkaProtocolHandler::remove_topic(std::string_view topic_name) {

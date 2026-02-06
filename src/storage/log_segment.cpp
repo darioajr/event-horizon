@@ -5,6 +5,8 @@
 #include <sstream>
 #include <cstring>
 #include <chrono>
+#include <ranges>
+#include <boost/iostreams/device/mapped_file.hpp>
 
 namespace fs = std::filesystem;
 
@@ -169,6 +171,10 @@ LogSegment::LogSegment(const std::string& path, int64_t base_offset)
     , base_offset_(base_offset)
     , next_offset_(base_offset) {
     
+    // Pre-allocate write buffers with extra capacity
+    write_buffer_.reserve(WRITE_BUFFER_SIZE + 64 * 1024);  // Extra 64KB for overflow
+    index_buffer_.reserve(32768);  // ~4000 index entries
+    
     // Create directory if it doesn't exist
     fs::path dir_path(path);
     if (!fs::exists(dir_path)) {
@@ -177,27 +183,104 @@ LogSegment::LogSegment(const std::string& path, int64_t base_offset)
     
     // Kafka-style filenames: 00000000000000000000.log
     std::string offset_str = format_offset_filename(base_offset);
-    std::string data_path = path + "/" + offset_str + ".log";
-    std::string index_path = path + "/" + offset_str + ".index";
+    data_path_ = path + "/" + offset_str + ".log";
+    index_path_ = path + "/" + offset_str + ".index";
     
-    // Open data file
-    data_file_.open(data_path, std::ios::in | std::ios::out | std::ios::binary | std::ios::app);
+    // Open data file with larger buffer
+    data_file_.open(data_path_, std::ios::in | std::ios::out | std::ios::binary | std::ios::app);
     if (!data_file_.is_open()) {
-        data_file_.open(data_path, std::ios::out | std::ios::binary);
+        data_file_.open(data_path_, std::ios::out | std::ios::binary);
         data_file_.close();
-        data_file_.open(data_path, std::ios::in | std::ios::out | std::ios::binary | std::ios::app);
+        data_file_.open(data_path_, std::ios::in | std::ios::out | std::ios::binary | std::ios::app);
     }
     
     // Open index file
-    index_file_.open(index_path, std::ios::in | std::ios::out | std::ios::binary | std::ios::app);
+    index_file_.open(index_path_, std::ios::in | std::ios::out | std::ios::binary | std::ios::app);
     if (!index_file_.is_open()) {
-        index_file_.open(index_path, std::ios::out | std::ios::binary);
+        index_file_.open(index_path_, std::ios::out | std::ios::binary);
         index_file_.close();
-        index_file_.open(index_path, std::ios::in | std::ios::out | std::ios::binary | std::ios::app);
+        index_file_.open(index_path_, std::ios::in | std::ios::out | std::ios::binary | std::ios::app);
     }
+    
+    // Get initial file size
+    data_file_.seekg(0, std::ios::end);
+    file_size_ = static_cast<size_t>(data_file_.tellg());
     
     // Recover state from existing files
     recover_offset();
+}
+
+LogSegment::~LogSegment() {
+    // Flush any pending writes
+    if (!write_buffer_.empty() || !index_buffer_.empty()) {
+        flush_write_buffer();
+    }
+    
+    // Close mmap if open
+    if (mmap_source_) {
+        mmap_source_->close();
+        mmap_source_.reset();
+    }
+}
+
+void LogSegment::flush_write_buffer() {
+    if (write_buffer_.empty() && index_buffer_.empty()) {
+        return;
+    }
+    
+    // Invalidate mmap (will be recreated on next read)
+    if (mmap_source_ && mmap_source_->is_open()) {
+        mmap_source_->close();
+        mmap_source_.reset();
+    }
+    
+    // Write data buffer
+    if (!write_buffer_.empty()) {
+        data_file_.seekp(0, std::ios::end);
+        data_file_.write(reinterpret_cast<const char*>(write_buffer_.data()), write_buffer_.size());
+        file_size_ += write_buffer_.size();
+        write_buffer_.clear();
+    }
+    
+    // Write index buffer  
+    if (!index_buffer_.empty()) {
+        index_file_.seekp(0, std::ios::end);
+        index_file_.write(reinterpret_cast<const char*>(index_buffer_.data()), index_buffer_.size());
+        index_buffer_.clear();
+    }
+    
+    // Let OS handle buffering - only flush on explicit sync/close
+}
+
+void LogSegment::ensure_mmap_valid() {
+    // Check if we need to create or recreate mmap
+    size_t current_size = file_size_ + write_buffer_.size();
+    
+    if (current_size == 0) {
+        return;
+    }
+    
+    // Flush pending writes if any, so mmap can see them
+    if (!write_buffer_.empty()) {
+        flush_write_buffer();
+    }
+    
+    // Recreate mmap if size changed or not open
+    if (!mmap_source_ || !mmap_source_->is_open() || mmap_size_ != file_size_) {
+        if (mmap_source_ && mmap_source_->is_open()) {
+            mmap_source_->close();
+        }
+        
+        if (file_size_ > 0) {
+            try {
+                mmap_source_ = std::make_unique<boost::iostreams::mapped_file_source>(data_path_);
+                mmap_size_ = file_size_;
+            } catch (const std::exception& e) {
+                LOG_WARN("Failed to create mmap for {}: {}", data_path_, e.what());
+                mmap_source_.reset();
+            }
+        }
+    }
 }
 
 void LogSegment::recover_offset() {
@@ -352,115 +435,127 @@ std::vector<uint8_t> LogSegment::build_record_batch(const Record& record, int64_
 }
 
 int64_t LogSegment::append(const Record& record) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock lock(mutex_);  // C++17 CTAD
     
-    // Get current position in data file
-    data_file_.seekp(0, std::ios::end);
-    int64_t position = data_file_.tellp();
+    // Current position is file size + pending buffer
+    int64_t position = static_cast<int64_t>(file_size_ + write_buffer_.size());
     
-    int64_t offset = next_offset_;
+    int64_t offset = next_offset_.load();
     
     // Build Kafka RecordBatch
     std::vector<uint8_t> batch = build_record_batch(record, offset);
     
-    // Write batch to log file
-    data_file_.write(reinterpret_cast<const char*>(batch.data()), batch.size());
-    data_file_.flush();
+    // Append to write buffer using memcpy for speed
+    size_t old_size = write_buffer_.size();
+    write_buffer_.resize(old_size + batch.size());
+    std::memcpy(write_buffer_.data() + old_size, batch.data(), batch.size());
     
-    // Update index (Kafka format: 4 bytes relative offset, 4 bytes position)
-    index_file_.seekp(0, std::ios::end);
+    // Build index entry using resize+direct write for speed
     int32_t relative_offset = static_cast<int32_t>(offset - base_offset_);
     int32_t pos32 = static_cast<int32_t>(position);
     
-    // Write in big-endian format
-    uint8_t index_entry[8];
-    index_entry[0] = static_cast<uint8_t>((relative_offset >> 24) & 0xFF);
-    index_entry[1] = static_cast<uint8_t>((relative_offset >> 16) & 0xFF);
-    index_entry[2] = static_cast<uint8_t>((relative_offset >> 8) & 0xFF);
-    index_entry[3] = static_cast<uint8_t>(relative_offset & 0xFF);
-    index_entry[4] = static_cast<uint8_t>((pos32 >> 24) & 0xFF);
-    index_entry[5] = static_cast<uint8_t>((pos32 >> 16) & 0xFF);
-    index_entry[6] = static_cast<uint8_t>((pos32 >> 8) & 0xFF);
-    index_entry[7] = static_cast<uint8_t>(pos32 & 0xFF);
-    
-    index_file_.write(reinterpret_cast<const char*>(index_entry), 8);
-    index_file_.flush();
+    old_size = index_buffer_.size();
+    index_buffer_.resize(old_size + 8);
+    uint8_t* idx_ptr = index_buffer_.data() + old_size;
+    idx_ptr[0] = static_cast<uint8_t>((relative_offset >> 24) & 0xFF);
+    idx_ptr[1] = static_cast<uint8_t>((relative_offset >> 16) & 0xFF);
+    idx_ptr[2] = static_cast<uint8_t>((relative_offset >> 8) & 0xFF);
+    idx_ptr[3] = static_cast<uint8_t>(relative_offset & 0xFF);
+    idx_ptr[4] = static_cast<uint8_t>((pos32 >> 24) & 0xFF);
+    idx_ptr[5] = static_cast<uint8_t>((pos32 >> 16) & 0xFF);
+    idx_ptr[6] = static_cast<uint8_t>((pos32 >> 8) & 0xFF);
+    idx_ptr[7] = static_cast<uint8_t>(pos32 & 0xFF);
     
     next_offset_++;
+    
+    // Flush if buffer is full
+    if (write_buffer_.size() >= WRITE_BUFFER_SIZE) {
+        flush_write_buffer();
+    }
     
     return offset;
 }
 
-int64_t LogSegment::append_raw_batch(const std::vector<uint8_t>& batch_data, int32_t record_count) {
-    std::lock_guard<std::mutex> lock(mutex_);
+int64_t LogSegment::append_raw_batch(std::span<const uint8_t> batch_data, int32_t record_count) {
+    std::unique_lock lock(mutex_);  // C++17 CTAD
     
     if (batch_data.size() < 12) {
         throw std::runtime_error("Invalid batch data: too short");
     }
     
-    // Get current position in data file
-    data_file_.seekp(0, std::ios::end);
-    int64_t position = data_file_.tellp();
+    // Current position is file size + pending buffer
+    int64_t position = static_cast<int64_t>(file_size_ + write_buffer_.size());
     
-    int64_t offset = next_offset_;
+    int64_t offset = next_offset_.load();
     
-    // Make a copy of the batch to modify the baseOffset
-    std::vector<uint8_t> batch = batch_data;
-    
-    // Update baseOffset (first 8 bytes) to our assigned offset - big-endian
-    batch[0] = static_cast<uint8_t>((offset >> 56) & 0xFF);
-    batch[1] = static_cast<uint8_t>((offset >> 48) & 0xFF);
-    batch[2] = static_cast<uint8_t>((offset >> 40) & 0xFF);
-    batch[3] = static_cast<uint8_t>((offset >> 32) & 0xFF);
-    batch[4] = static_cast<uint8_t>((offset >> 24) & 0xFF);
-    batch[5] = static_cast<uint8_t>((offset >> 16) & 0xFF);
-    batch[6] = static_cast<uint8_t>((offset >> 8) & 0xFF);
-    batch[7] = static_cast<uint8_t>(offset & 0xFF);
-    
-    // Write batch to log file (CRC remains valid because baseOffset is not included in CRC)
-    data_file_.write(reinterpret_cast<const char*>(batch.data()), batch.size());
-    data_file_.flush();
-    
-    // Update index for each record in the batch
-    index_file_.seekp(0, std::ios::end);
-    
-    for (int32_t i = 0; i < record_count; i++) {
-        int32_t relative_offset = static_cast<int32_t>((offset + i) - base_offset_);
-        int32_t pos32 = static_cast<int32_t>(position);
-        
-        // Write in big-endian format
-        uint8_t index_entry[8];
-        index_entry[0] = static_cast<uint8_t>((relative_offset >> 24) & 0xFF);
-        index_entry[1] = static_cast<uint8_t>((relative_offset >> 16) & 0xFF);
-        index_entry[2] = static_cast<uint8_t>((relative_offset >> 8) & 0xFF);
-        index_entry[3] = static_cast<uint8_t>(relative_offset & 0xFF);
-        index_entry[4] = static_cast<uint8_t>((pos32 >> 24) & 0xFF);
-        index_entry[5] = static_cast<uint8_t>((pos32 >> 16) & 0xFF);
-        index_entry[6] = static_cast<uint8_t>((pos32 >> 8) & 0xFF);
-        index_entry[7] = static_cast<uint8_t>(pos32 & 0xFF);
-        
-        index_file_.write(reinterpret_cast<const char*>(index_entry), 8);
+    // Pre-compute new size and reserve if needed
+    size_t batch_size = batch_data.size();
+    size_t new_size = write_buffer_.size() + batch_size;
+    if (new_size > write_buffer_.capacity()) {
+        write_buffer_.reserve(new_size + 64 * 1024);
     }
-    index_file_.flush();
+    
+    // Write baseOffset (8 bytes big-endian) using resize + memcpy for speed
+    size_t old_size = write_buffer_.size();
+    write_buffer_.resize(old_size + 8);
+    uint8_t* ptr = write_buffer_.data() + old_size;
+    ptr[0] = static_cast<uint8_t>((offset >> 56) & 0xFF);
+    ptr[1] = static_cast<uint8_t>((offset >> 48) & 0xFF);
+    ptr[2] = static_cast<uint8_t>((offset >> 40) & 0xFF);
+    ptr[3] = static_cast<uint8_t>((offset >> 32) & 0xFF);
+    ptr[4] = static_cast<uint8_t>((offset >> 24) & 0xFF);
+    ptr[5] = static_cast<uint8_t>((offset >> 16) & 0xFF);
+    ptr[6] = static_cast<uint8_t>((offset >> 8) & 0xFF);
+    ptr[7] = static_cast<uint8_t>(offset & 0xFF);
+    
+    // Append rest of batch data using memcpy (skip first 8 bytes - original baseOffset)
+    size_t rest_size = batch_size - 8;
+    old_size = write_buffer_.size();
+    write_buffer_.resize(old_size + rest_size);
+    std::memcpy(write_buffer_.data() + old_size, batch_data.data() + 8, rest_size);
+    
+    // Sparse index: only one entry per batch - use resize+direct write for speed
+    int32_t relative_offset = static_cast<int32_t>(offset - base_offset_);
+    int32_t pos32 = static_cast<int32_t>(position);
+    
+    old_size = index_buffer_.size();
+    index_buffer_.resize(old_size + 8);
+    uint8_t* idx_ptr = index_buffer_.data() + old_size;
+    idx_ptr[0] = static_cast<uint8_t>((relative_offset >> 24) & 0xFF);
+    idx_ptr[1] = static_cast<uint8_t>((relative_offset >> 16) & 0xFF);
+    idx_ptr[2] = static_cast<uint8_t>((relative_offset >> 8) & 0xFF);
+    idx_ptr[3] = static_cast<uint8_t>(relative_offset & 0xFF);
+    idx_ptr[4] = static_cast<uint8_t>((pos32 >> 24) & 0xFF);
+    idx_ptr[5] = static_cast<uint8_t>((pos32 >> 16) & 0xFF);
+    idx_ptr[6] = static_cast<uint8_t>((pos32 >> 8) & 0xFF);
+    idx_ptr[7] = static_cast<uint8_t>(pos32 & 0xFF);
     
     next_offset_ += record_count;
+    
+    // Flush if buffer is full
+    if (write_buffer_.size() >= WRITE_BUFFER_SIZE) {
+        flush_write_buffer();
+    }
     
     return offset;
 }
 
 std::vector<Record> LogSegment::read(int64_t start_offset, size_t max_records) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock lock(mutex_);  // C++17 CTAD - need unique for potential flush
     
     std::vector<Record> records;
     
-    if (start_offset < base_offset_ || start_offset >= next_offset_) {
+    if (start_offset < base_offset_ || start_offset >= next_offset_.load()) {
         return records;
     }
     
+    // Flush pending writes before reading
+    if (!write_buffer_.empty()) {
+        flush_write_buffer();
+    }
+    
     data_file_.clear();
-    data_file_.flush();
     index_file_.clear();
-    index_file_.flush();
     
     // Find position using index
     int64_t relative_offset = start_offset - base_offset_;
@@ -564,19 +659,22 @@ std::vector<Record> LogSegment::read(int64_t start_offset, size_t max_records) {
 }
 
 std::pair<std::vector<uint8_t>, int32_t> LogSegment::read_raw(int64_t start_offset, size_t max_bytes) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::unique_lock lock(mutex_);  // C++17 CTAD - need unique for potential flush
     
     std::vector<uint8_t> data;
     int32_t record_count = 0;
     
-    if (start_offset < base_offset_ || start_offset >= next_offset_) {
+    if (start_offset < base_offset_ || start_offset >= next_offset_.load()) {
         return {data, 0};
     }
     
+    // Flush pending writes before reading
+    if (!write_buffer_.empty()) {
+        flush_write_buffer();
+    }
+    
     data_file_.clear();
-    data_file_.flush();
     index_file_.clear();
-    index_file_.flush();
     
     // Find position using index
     int64_t relative_offset = start_offset - base_offset_;
@@ -650,30 +748,17 @@ std::pair<std::vector<uint8_t>, int32_t> LogSegment::read_raw(int64_t start_offs
 }
 
 void LogSegment::flush() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    data_file_.flush();
-    index_file_.flush();
+    std::unique_lock lock(mutex_);  // C++17 CTAD
+    flush_write_buffer();
 }
 
 int64_t LogSegment::size() const {
-    return next_offset_ - base_offset_;
+    return next_offset_.load() - base_offset_;
 }
 
 int64_t LogSegment::get_size_bytes() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    
-    // Get current file position to restore later
-    auto& file = const_cast<std::fstream&>(data_file_);
-    auto current_pos = file.tellg();
-    
-    // Seek to end to get file size
-    file.seekg(0, std::ios::end);
-    int64_t size = file.tellg();
-    
-    // Restore position
-    file.seekg(current_pos);
-    
-    return size > 0 ? size : 0;
+    std::shared_lock lock(mutex_);  // C++17 CTAD - read-only access
+    return static_cast<int64_t>(file_size_ + write_buffer_.size());
 }
 
 int64_t LogSegment::get_base_offset() const {
@@ -681,9 +766,9 @@ int64_t LogSegment::get_base_offset() const {
 }
 
 int64_t LogSegment::get_next_offset() const {
-    return next_offset_;
+    return next_offset_.load();
 }
 
 bool LogSegment::contains_offset(int64_t offset) const {
-    return offset >= base_offset_ && offset < next_offset_;
+    return offset >= base_offset_ && offset < next_offset_.load();
 }

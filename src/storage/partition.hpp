@@ -4,7 +4,8 @@
 #include <memory>
 #include <deque>
 #include <string>
-#include <mutex>
+#include <span>
+#include <shared_mutex>
 
 /**
  * @brief Representa uma partição de um tópico
@@ -32,11 +33,22 @@ public:
     
     /**
      * @brief Armazena um RecordBatch bruto na partição (mantém CRC original)
-     * @param batch_data Bytes do RecordBatch original do cliente
+     * @param batch_data Bytes do RecordBatch original do cliente (C++23 span)
      * @param record_count Número de records no batch
      * @return Offset base atribuído ao batch
      */
-    int64_t produce_raw_batch(const std::vector<uint8_t>& batch_data, int32_t record_count);
+    int64_t produce_raw_batch(std::span<const uint8_t> batch_data, int32_t record_count);
+    
+    /**
+     * @brief Produz múltiplos batches de uma vez (batch coalescing)
+     * 
+     * Mais eficiente que múltiplas chamadas a produce_raw_batch pois
+     * usa um único lock para todos os batches.
+     * 
+     * @param batches Vector de pares (data, record_count)
+     * @return Base offset do primeiro batch
+     */
+    int64_t produce_raw_batches(std::span<const std::pair<std::span<const uint8_t>, int32_t>> batches);
     
     /**
      * @brief Busca mensagens a partir de um offset

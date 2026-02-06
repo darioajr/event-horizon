@@ -192,6 +192,18 @@ Broker::Broker(const std::string& config_path)
         return groups;
     });
     
+    // Configurar callback para criação de tópicos
+    protocol_handler_->set_create_topic_callback([this](const std::string& name, int32_t num_partitions, int16_t replication_factor) {
+        // Check if topic already exists
+        {
+            std::shared_lock<std::shared_mutex> lock(topics_mutex_);
+            if (topics_.find(name) != topics_.end()) {
+                return; // Already exists
+            }
+        }
+        create_topic(name, num_partitions, replication_factor);
+    });
+    
     // Registrar handlers customizados para Produce e Fetch
     register_protocol_handlers();
     
@@ -760,15 +772,7 @@ int64_t Broker::produce(const std::string& topic, int32_t partition_id,
 
 int64_t Broker::produce_raw_batch(const std::string& topic, int32_t partition_id,
                                    const std::vector<uint8_t>& batch_data, int32_t record_count) {
-    // Auto-criar tópico se não existir
-    {
-        std::shared_lock<std::shared_mutex> lock(topics_mutex_);
-        if (topics_.find(topic) == topics_.end()) {
-            lock.unlock();
-            create_topic(topic, config_.num_partitions, config_.replication_factor);
-        }
-    }
-    
+    // get_partition already handles topic lookup and lazy creation
     Partition* partition = get_partition(topic, partition_id);
     if (!partition) {
         throw std::runtime_error("Partition not found");
@@ -822,7 +826,8 @@ std::vector<uint8_t> Broker::handle_produce_request(
     int16_t acks = reader.read_int16();
     int32_t timeout = reader.read_int32();
     
-    BufferWriter writer;
+    // Pre-allocate response buffer (typical produce response is ~100-500 bytes)
+    BufferWriter writer(512);
     writer.write_int32(header.correlation_id);
     
     // Response header v1 for flexible versions - TAG_BUFFER

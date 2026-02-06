@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <vector>
+#include <span>
 #include <string>
 #include <memory>
 #include <unordered_map>
@@ -155,6 +156,10 @@ public:
     std::vector<uint8_t> read_nullable_bytes(); // INT32 length (-1 = null) + bytes
     std::vector<uint8_t> read_compact_bytes();  // UNSIGNED_VARINT length + bytes
     std::vector<uint8_t> read_compact_nullable_bytes(); // UNSIGNED_VARINT length (0 = null, else len-1)
+    
+    // Zero-copy versions returning spans (no allocation)
+    std::span<const uint8_t> read_nullable_bytes_view(); // INT32 length (-1 = null) + bytes
+    std::span<const uint8_t> read_compact_nullable_bytes_view(); // UNSIGNED_VARINT (0 = null, else len-1)
     
     std::string read_bytes_as_string(size_t len); // Read len bytes as string
     
@@ -337,9 +342,11 @@ public:
      */
     using TopicsCallback = std::function<std::vector<TopicInfo>()>;
     using GroupsCallback = std::function<std::vector<ConsumerGroupInfo>()>;
+    using CreateTopicCallback = std::function<void(const std::string& name, int32_t num_partitions, int16_t replication_factor)>;
     
     void set_topics_callback(TopicsCallback callback);
     void set_groups_callback(GroupsCallback callback);
+    void set_create_topic_callback(CreateTopicCallback callback);
     
     /**
      * @brief Define o gerenciador de consumer groups
@@ -408,6 +415,7 @@ private:
     // Callbacks
     TopicsCallback topics_callback_;
     GroupsCallback groups_callback_;
+    CreateTopicCallback create_topic_callback_;
     
     // Consumer Group Manager (ponteiro não-owning)
     ConsumerGroupManager* consumer_group_manager_ = nullptr;

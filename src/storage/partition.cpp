@@ -89,7 +89,7 @@ void Partition::create_new_segment(int64_t base_offset) {
 int64_t Partition::produce(const std::string& key, 
                            const std::vector<uint8_t>& value,
                            int64_t timestamp) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard lock(mutex_);  // C++17 CTAD
     
     // Verificar se precisa criar novo segment
     if (should_roll_segment()) {
@@ -111,8 +111,8 @@ int64_t Partition::produce(const std::string& key,
     return offset;
 }
 
-int64_t Partition::produce_raw_batch(const std::vector<uint8_t>& batch_data, int32_t record_count) {
-    std::lock_guard<std::mutex> lock(mutex_);
+int64_t Partition::produce_raw_batch(std::span<const uint8_t> batch_data, int32_t record_count) {
+    std::lock_guard lock(mutex_);  // C++17 CTAD
     
     // Verificar se precisa criar novo segment
     if (should_roll_segment()) {
@@ -128,8 +128,43 @@ int64_t Partition::produce_raw_batch(const std::vector<uint8_t>& batch_data, int
     return offset;
 }
 
+int64_t Partition::produce_raw_batches(std::span<const std::pair<std::span<const uint8_t>, int32_t>> batches) {
+    if (batches.empty()) {
+        return log_end_offset_;
+    }
+    
+    std::lock_guard lock(mutex_);  // C++17 CTAD - single lock for all batches
+    
+    // Verificar se precisa criar novo segment
+    if (should_roll_segment()) {
+        roll_segment();
+    }
+    
+    // Usar segment ativo (último)
+    LogSegment* active_segment = segments_.back().get();
+    
+    int64_t base_offset = -1;
+    
+    // Process all batches with single lock
+    for (const auto& [batch_data, record_count] : batches) {
+        int64_t offset = active_segment->append_raw_batch(batch_data, record_count);
+        if (base_offset < 0) {
+            base_offset = offset;
+        }
+        log_end_offset_ = offset + record_count;
+        
+        // Check if we need to roll segment mid-batch
+        if (should_roll_segment()) {
+            roll_segment();
+            active_segment = segments_.back().get();
+        }
+    }
+    
+    return base_offset;
+}
+
 std::vector<Record> Partition::fetch(int64_t offset, size_t max_bytes) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard lock(mutex_);  // C++17 CTAD
     
     std::vector<Record> results;
     size_t total_bytes = 0;
@@ -163,7 +198,7 @@ std::vector<Record> Partition::fetch(int64_t offset, size_t max_bytes) {
 }
 
 std::pair<std::vector<uint8_t>, int32_t> Partition::fetch_raw(int64_t offset, size_t max_bytes) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    std::lock_guard lock(mutex_);  // C++17 CTAD
     
     if (offset < log_start_offset_ || offset >= log_end_offset_) {
         return {{}, 0};
