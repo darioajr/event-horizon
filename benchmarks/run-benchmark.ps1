@@ -19,6 +19,9 @@
 .PARAMETER MessageSize
     Tamanho da mensagem em bytes (default: 1024)
 
+.PARAMETER MessageCount
+    Quantidade de mensagens a enviar (default: 100000)
+
 .PARAMETER Duration
     Duracao do teste em minutos (default: 2)
 
@@ -47,6 +50,9 @@ param(
     [int]$MessageSize = 1024,
     
     [Parameter(Mandatory=$false)]
+    [int]$MessageCount = 100000,
+    
+    [Parameter(Mandatory=$false)]
     [int]$Duration = 2
 )
 
@@ -59,10 +65,11 @@ Write-Host "  Benchmark de Producao: Event Horizon vs Apache Kafka" -ForegroundC
 Write-Host "================================================================" -ForegroundColor Blue
 Write-Host ""
 Write-Host "Configuracao:" -ForegroundColor Cyan
-Write-Host "  Target:       $Target"
-Write-Host "  Workload:     $Workload"
-Write-Host "  Message Size: $MessageSize bytes"
-Write-Host "  Duration:     $Duration minutos"
+Write-Host "  Target:        $Target"
+Write-Host "  Workload:      $Workload"
+Write-Host "  Message Size:  $MessageSize bytes"
+Write-Host "  Message Count: $MessageCount"
+Write-Host "  Duration:      $Duration minutos"
 Write-Host ""
 
 # Criar diretorio de resultados
@@ -96,6 +103,10 @@ Push-Location $ScriptDir
 
 try {
     $WorkloadFile = "$Workload-1kb.yaml"
+    
+    # Definir variaveis de ambiente para docker-compose
+    $env:NUM_RECORDS = "$MessageCount"
+    $env:RECORD_SIZE = "$MessageSize"
     
     switch ($Target) {
         "kafka" {

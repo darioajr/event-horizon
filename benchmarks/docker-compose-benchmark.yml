@@ -53,8 +53,8 @@ services:
       - ./results:/results
     environment:
       BOOTSTRAP_SERVERS: kafka:9092
-      NUM_RECORDS: 100000
-      RECORD_SIZE: 1024
+      NUM_RECORDS: ${NUM_RECORDS:-100000}
+      RECORD_SIZE: ${RECORD_SIZE:-1024}
       THROUGHPUT: -1
     command:
       - /bin/bash
@@ -69,12 +69,12 @@ services:
         sleep 2
         echo ''
         echo 'Iniciando benchmark de producao...'
-        echo 'Records: 100000, Size: 1024 bytes, Batch: 1MB, Linger: 10ms'
+        echo "Records: $NUM_RECORDS, Size: $RECORD_SIZE bytes, Batch: 1MB, Linger: 10ms"
         echo ''
         kafka-producer-perf-test \
           --topic benchmark-topic \
-          --num-records 100000 \
-          --record-size 1024 \
+          --num-records $NUM_RECORDS \
+          --record-size $RECORD_SIZE \
           --throughput -1 \
           --producer-props \
             bootstrap.servers=kafka:9092 \
@@ -101,8 +101,8 @@ services:
       - "host.docker.internal:host-gateway"
     environment:
       BOOTSTRAP_SERVERS: host.docker.internal:9092
-      NUM_RECORDS: 100000
-      RECORD_SIZE: 1024
+      NUM_RECORDS: ${NUM_RECORDS:-100000}
+      RECORD_SIZE: ${RECORD_SIZE:-1024}
       THROUGHPUT: -1
     command:
       - /bin/bash
@@ -117,12 +117,12 @@ services:
         sleep 2
         echo ''
         echo 'Iniciando benchmark de producao...'
-        echo 'Records: 100000, Size: 1024 bytes, Batch: 1MB, Linger: 10ms'
+        echo "Records: $NUM_RECORDS, Size: $RECORD_SIZE bytes, Batch: 1MB, Linger: 10ms"
         echo ''
         kafka-producer-perf-test \
           --topic benchmark-topic \
-          --num-records 100000 \
-          --record-size 1024 \
+          --num-records $NUM_RECORDS \
+          --record-size $RECORD_SIZE \
           --throughput -1 \
           --producer-props \
             bootstrap.servers=host.docker.internal:9092 \
