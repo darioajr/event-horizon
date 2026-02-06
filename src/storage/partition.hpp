@@ -16,7 +16,8 @@
 class Partition {
 public:
     Partition(const std::string& topic, int32_t partition_id, 
-              const std::string& log_dir);
+              const std::string& log_dir, 
+              const StorageConfig& storage_config = StorageConfig{});
     ~Partition();
     
     // Não permitir cópia
@@ -118,6 +119,7 @@ private:
     std::string topic_;
     int32_t partition_id_;
     std::string partition_dir_;
+    StorageConfig storage_config_;
     std::deque<std::unique_ptr<LogSegment>> segments_;
     mutable std::mutex mutex_;
     

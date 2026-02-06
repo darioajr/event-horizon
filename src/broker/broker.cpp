@@ -98,6 +98,13 @@ BrokerConfig BrokerConfig::load(const std::string& config_path) {
         if (json.contains("cluster_id")) {
             config.cluster_id = json["cluster_id"].get<std::string>();
         }
+        // Storage tuning parameters
+        if (json.contains("write_buffer_kb")) {
+            config.write_buffer_kb = json["write_buffer_kb"].get<size_t>();
+        }
+        if (json.contains("sync_writes")) {
+            config.sync_writes = json["sync_writes"].get<bool>();
+        }
         
         LOG_INFO("Loaded config from: {}", config_path);
     } catch (const std::exception& e) {
@@ -117,6 +124,8 @@ void BrokerConfig::save(const std::string& config_path) const {
     json["replication_factor"] = replication_factor;
     json["thread_pool_size"] = thread_pool_size;
     json["cluster_id"] = cluster_id;
+    json["write_buffer_kb"] = write_buffer_kb;
+    json["sync_writes"] = sync_writes;
     
     std::ofstream file(config_path);
     file << json.dump(4);
@@ -277,7 +286,7 @@ void Broker::load_topics() {
                     
                     // Criar partição
                     auto partition = std::make_unique<Partition>(
-                        topic, partition_id, config_.log_dir);
+                        topic, partition_id, config_.log_dir, get_storage_config());
                     
                     topics_[topic].push_back(std::move(partition));
                     
@@ -380,7 +389,7 @@ void Broker::create_topic(const std::string& name, int32_t num_partitions,
     
     for (int32_t i = 0; i < num_partitions; ++i) {
         partitions.push_back(
-            std::make_unique<Partition>(name, i, config_.log_dir));
+            std::make_unique<Partition>(name, i, config_.log_dir, get_storage_config()));
     }
     
     topics_[name] = std::move(partitions);
@@ -522,7 +531,7 @@ Partition* Broker::get_partition(const std::string& topic, int32_t partition_id)
                 
                 for (int32_t i = 0; i < num_parts; ++i) {
                     partitions.push_back(
-                        std::make_unique<Partition>(topic, i, config_.log_dir));
+                        std::make_unique<Partition>(topic, i, config_.log_dir, get_storage_config()));
                 }
                 
                 LOG_INFO("Lazily created topic: {} with {} partitions", topic, num_parts);

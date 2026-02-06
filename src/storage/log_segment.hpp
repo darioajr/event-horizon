@@ -17,6 +17,14 @@ namespace boost { namespace iostreams {
 }}
 
 /**
+ * @brief Storage configuration
+ */
+struct StorageConfig {
+    size_t write_buffer_kb = 1024;  // Write buffer size in KB
+    bool sync_writes = false;        // Sync after each flush
+};
+
+/**
  * @brief Representa um registro/evento no log
  */
 struct Record {
@@ -40,7 +48,8 @@ struct Record {
  */
 class LogSegment {
 public:
-    LogSegment(const std::string& path, int64_t base_offset);
+    LogSegment(const std::string& path, int64_t base_offset, 
+               const StorageConfig& config = StorageConfig{});
     ~LogSegment();
     
     // Não permitir cópia
@@ -119,8 +128,11 @@ private:
     std::fstream index_file_;
     mutable std::shared_mutex mutex_;  // C++17 shared_mutex for reader-writer lock
     
+    // Storage configuration
+    StorageConfig config_;
+    size_t write_buffer_size_;  // Computed from config
+    
     // Write buffer for batching writes (reduces syscalls)
-    static constexpr size_t WRITE_BUFFER_SIZE = 1024 * 1024;  // 1MB buffer for better throughput
     std::vector<uint8_t> write_buffer_;
     std::vector<uint8_t> index_buffer_;
     size_t file_size_ = 0;       // Current file size on disk

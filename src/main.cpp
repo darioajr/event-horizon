@@ -119,6 +119,8 @@ int main(int argc, char* argv[]) {
         LOG_INFO("  Port:         {}", config.port);
         LOG_INFO("  Data Dir:     {}", config.log_dir);
         LOG_INFO("  Thread Pool:  {}", config.thread_pool_size);
+        LOG_INFO("  Write Buffer: {} KB", config.write_buffer_kb);
+        LOG_INFO("  Sync Writes:  {}", config.sync_writes ? "yes" : "no");
         LOG_INFO("  Log Level:    {}", log_level_str);
         
         // Criar e iniciar broker

@@ -15,9 +15,11 @@ constexpr size_t MAX_RECORDS_PER_SEGMENT = 10000000;     // 10M records
 // ============================================================================
 
 Partition::Partition(const std::string& topic, int32_t partition_id, 
-                     const std::string& log_dir)
+                     const std::string& log_dir,
+                     const StorageConfig& storage_config)
     : topic_(topic)
     , partition_id_(partition_id)
+    , storage_config_(storage_config)
     , log_start_offset_(0)
     , log_end_offset_(0) {
     
@@ -61,7 +63,7 @@ void Partition::load_segments() {
     std::sort(base_offsets.begin(), base_offsets.end());
     
     for (int64_t base_offset : base_offsets) {
-        auto segment = std::make_unique<LogSegment>(partition_dir_, base_offset);
+        auto segment = std::make_unique<LogSegment>(partition_dir_, base_offset, storage_config_);
         
         // Atualizar offsets
         if (segments_.empty()) {
@@ -79,7 +81,7 @@ void Partition::load_segments() {
 }
 
 void Partition::create_new_segment(int64_t base_offset) {
-    auto segment = std::make_unique<LogSegment>(partition_dir_, base_offset);
+    auto segment = std::make_unique<LogSegment>(partition_dir_, base_offset, storage_config_);
     segments_.push_back(std::move(segment));
     
     LOG_DEBUG("Created new segment with base_offset={} for {}-{}",

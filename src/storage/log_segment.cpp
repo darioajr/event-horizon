@@ -166,13 +166,16 @@ static std::string format_offset_filename(int64_t offset) {
     return oss.str();
 }
 
-LogSegment::LogSegment(const std::string& path, int64_t base_offset)
+LogSegment::LogSegment(const std::string& path, int64_t base_offset,
+                       const StorageConfig& config)
     : path_(path)
     , base_offset_(base_offset)
-    , next_offset_(base_offset) {
+    , next_offset_(base_offset)
+    , config_(config)
+    , write_buffer_size_(config.write_buffer_kb * 1024) {
     
     // Pre-allocate write buffers with extra capacity
-    write_buffer_.reserve(WRITE_BUFFER_SIZE + 64 * 1024);  // Extra 64KB for overflow
+    write_buffer_.reserve(write_buffer_size_ + 64 * 1024);  // Extra 64KB for overflow
     index_buffer_.reserve(32768);  // ~4000 index entries
     
     // Create directory if it doesn't exist
@@ -249,7 +252,11 @@ void LogSegment::flush_write_buffer() {
         index_buffer_.clear();
     }
     
-    // Let OS handle buffering - only flush on explicit sync/close
+    // Sync to disk if configured (trades latency for durability)
+    if (config_.sync_writes) {
+        data_file_.flush();
+        index_file_.flush();
+    }
 }
 
 void LogSegment::ensure_mmap_valid() {
@@ -469,7 +476,7 @@ int64_t LogSegment::append(const Record& record) {
     next_offset_++;
     
     // Flush if buffer is full
-    if (write_buffer_.size() >= WRITE_BUFFER_SIZE) {
+    if (write_buffer_.size() >= write_buffer_size_) {
         flush_write_buffer();
     }
     
@@ -533,7 +540,7 @@ int64_t LogSegment::append_raw_batch(std::span<const uint8_t> batch_data, int32_
     next_offset_ += record_count;
     
     // Flush if buffer is full
-    if (write_buffer_.size() >= WRITE_BUFFER_SIZE) {
+    if (write_buffer_.size() >= write_buffer_size_) {
         flush_write_buffer();
     }
     

@@ -29,6 +29,10 @@ struct BrokerConfig {
     size_t thread_pool_size = 4;
     std::string cluster_id = "event-horizon-cluster";
     
+    // Storage tuning parameters
+    size_t write_buffer_kb = 1024;    // Write buffer size in KB (default 1MB)
+    bool sync_writes = false;         // Sync to disk after each buffer flush
+    
     static BrokerConfig load(const std::string& config_path);
     void save(const std::string& config_path) const;
 };
@@ -153,6 +157,14 @@ public:
 private:
     void load_topics();
     void register_protocol_handlers();
+    
+    // Get storage config from broker config
+    StorageConfig get_storage_config() const {
+        return StorageConfig{
+            .write_buffer_kb = config_.write_buffer_kb,
+            .sync_writes = config_.sync_writes
+        };
+    }
     
     // Protocol request handlers
     std::vector<uint8_t> handle_produce_request(
