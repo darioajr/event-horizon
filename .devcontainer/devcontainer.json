@@ -80,7 +80,8 @@
     "remoteUser": "vscode",
     "containerEnv": {
         "VCPKG_ROOT": "/vcpkg",
-        "SSH_AUTH_SOCK": "${localEnv:SSH_AUTH_SOCK}"
+        "SSH_AUTH_SOCK": "${localEnv:SSH_AUTH_SOCK}",
+        "GIT_SSH_COMMAND": "ssh -F /home/vscode/.ssh-local/config -o IdentitiesOnly=yes -o UserKnownHostsFile=/home/vscode/.ssh-local/known_hosts -o StrictHostKeyChecking=accept-new"
     },
     "forwardPorts": [
         9092
