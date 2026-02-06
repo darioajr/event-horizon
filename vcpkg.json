@@ -35,9 +35,13 @@
     {
       "name": "nlohmann-json",
       "version": "3.12.0"
+    },
+    {
+      "name": "spdlog",
+      "version": "1.17.0"
     }
   ],
-  "builtin-baseline": "75a2e14262fc23c1f03bac18e135c4866dd25b51",
+  "builtin-baseline": "6f29f12e82a8293156836ad81cc9bf5af41fe836",
   "features": {
     "tests": {
       "description": "Build tests",
