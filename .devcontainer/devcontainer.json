@@ -48,7 +48,7 @@
                 "streetsidesoftware.code-spell-checker"
             ],
             "settings": {
-                "cmake.configureOnOpen": true,
+                "cmake.configureOnOpen": false,
                 "cmake.generator": "Ninja",
                 "cmake.configureSettings": {
                     "CMAKE_TOOLCHAIN_FILE": "/vcpkg/scripts/buildsystems/vcpkg.cmake"
@@ -73,15 +73,14 @@
         "ghcr.io/devcontainers/features/github-cli:1": {}
     },
     "mounts": [
-        "source=${localEnv:USERPROFILE}/.gitconfig,target=/home/vscode/.gitconfig,type=bind,consistency=cached",
+        "source=${localEnv:USERPROFILE}/.gitconfig,target=/home/vscode/.gitconfig-host,type=bind,consistency=cached,readonly",
         "source=${localEnv:USERPROFILE}/.ssh,target=/home/vscode/.ssh,type=bind,consistency=cached"
     ],
     "postCreateCommand": "bash .devcontainer/post-create.sh",
     "remoteUser": "vscode",
     "containerEnv": {
         "VCPKG_ROOT": "/vcpkg",
-        "SSH_AUTH_SOCK": "${localEnv:SSH_AUTH_SOCK}",
-        "GIT_SSH_COMMAND": "ssh -F /home/vscode/.ssh-local/config -o IdentitiesOnly=yes -o UserKnownHostsFile=/home/vscode/.ssh-local/known_hosts -o StrictHostKeyChecking=accept-new"
+        "SSH_AUTH_SOCK": "${localEnv:SSH_AUTH_SOCK}"
     },
     "forwardPorts": [
         9092

@@ -8,6 +8,17 @@ echo "========================================="
 # Garantir permissões do diretório
 sudo chown -R vscode:vscode /workspaces/eventhorizon 2>/dev/null || true
 
+# Copiar .gitconfig do host (montado como readonly) para local editável
+GITCONFIG_HOST="/home/vscode/.gitconfig-host"
+GITCONFIG_LOCAL="/home/vscode/.gitconfig"
+
+if [ -f "$GITCONFIG_HOST" ]; then
+    echo "Copiando .gitconfig do host..."
+    cp "$GITCONFIG_HOST" "$GITCONFIG_LOCAL"
+    chown vscode:vscode "$GITCONFIG_LOCAL"
+    chmod 644 "$GITCONFIG_LOCAL"
+fi
+
 # Configurar Git
 git config --global --add safe.directory /workspaces/eventhorizon
 git config --global core.autocrlf input
@@ -36,22 +47,43 @@ if [ -d "$SSH_MOUNTED" ]; then
         chmod 600 "$SSH_LOCAL/config"
     fi
     
-    # Configurar SSH para usar o diretório local
-    echo "Configurando SSH para usar diretório local..."
+    # Descobrir qual chave SSH usar
+    SSH_KEY=""
+    for key in id_ed25519 id_rsa id_ecdsa id_dsa; do
+        if [ -f "$SSH_LOCAL/$key" ]; then
+            SSH_KEY="$SSH_LOCAL/$key"
+            break
+        fi
+    done
+    
+    # Construir GIT_SSH_COMMAND baseado no que está disponível
+    SSH_OPTS="-o IdentitiesOnly=yes -o UserKnownHostsFile=$SSH_LOCAL/known_hosts -o StrictHostKeyChecking=accept-new"
+    
+    if [ -f "$SSH_LOCAL/config" ]; then
+        SSH_OPTS="-F $SSH_LOCAL/config $SSH_OPTS"
+    fi
+    
+    if [ -n "$SSH_KEY" ]; then
+        SSH_OPTS="-i $SSH_KEY $SSH_OPTS"
+    fi
+    
+    GIT_SSH_CMD="ssh $SSH_OPTS"
     
     # Adicionar configuração no .bashrc para usar o SSH local
     if ! grep -q "SSH_LOCAL" /home/vscode/.bashrc 2>/dev/null; then
-        cat >> /home/vscode/.bashrc << 'EOF'
+        cat >> /home/vscode/.bashrc << EOF
 
 # SSH config fix for devcontainer (bind mount permissions)
-export GIT_SSH_COMMAND="ssh -F /home/vscode/.ssh-local/config -i /home/vscode/.ssh-local/id_rsa -o IdentitiesOnly=yes -o UserKnownHostsFile=/home/vscode/.ssh-local/known_hosts"
+export GIT_SSH_COMMAND="$GIT_SSH_CMD"
 EOF
     fi
     
     # Aplicar para sessão atual também
-    export GIT_SSH_COMMAND="ssh -F $SSH_LOCAL/config -i $SSH_LOCAL/id_rsa -o IdentitiesOnly=yes -o UserKnownHostsFile=$SSH_LOCAL/known_hosts"
+    export GIT_SSH_COMMAND="$GIT_SSH_CMD"
     
     echo "SSH configurado para usar: $SSH_LOCAL"
+else
+    echo "Aviso: Diretório SSH não encontrado em $SSH_MOUNTED"
 fi
 
 # Corrigir permissões do vcpkg
