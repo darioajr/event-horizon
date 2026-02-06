@@ -58,7 +58,8 @@ RUN git clone https://github.com/microsoft/vcpkg.git /vcpkg \
     && cd /vcpkg \
     && git checkout ${VCPKG_VERSION} \
     && ./bootstrap-vcpkg.sh \
-    && ln -s /vcpkg/vcpkg /usr/local/bin/vcpkg
+    && ln -s /vcpkg/vcpkg /usr/local/bin/vcpkg \
+    && chown -R ${USERNAME}:${USERNAME} /vcpkg
 
 # Configurar variáveis de ambiente do vcpkg
 ENV VCPKG_ROOT=/vcpkg
