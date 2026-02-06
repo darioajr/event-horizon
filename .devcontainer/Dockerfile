@@ -3,7 +3,7 @@
 FROM ubuntu:22.04
 
 # Argumentos para configuração
-ARG VCPKG_VERSION=2025.01.13
+ARG VCPKG_COMMIT=75a2e14262fc23c1f03bac18e135c4866dd25b51
 ARG USERNAME=vscode
 ARG USER_UID=1000
 ARG USER_GID=$USER_UID
@@ -56,7 +56,7 @@ ENV LANG=en_US.UTF-8
 # Instalar vcpkg
 RUN git clone https://github.com/microsoft/vcpkg.git /vcpkg \
     && cd /vcpkg \
-    && git checkout ${VCPKG_VERSION} \
+    && git checkout ${VCPKG_COMMIT} \
     && ./bootstrap-vcpkg.sh \
     && ln -s /vcpkg/vcpkg /usr/local/bin/vcpkg \
     && chown -R ${USERNAME}:${USERNAME} /vcpkg

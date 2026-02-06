@@ -9,6 +9,7 @@ on:
 env:
   BUILD_TYPE: Debug
   VCPKG_COMMIT: '75a2e14262fc23c1f03bac18e135c4866dd25b51'
+  VCPKG_BINARY_SOURCES: "clear"
 
 jobs:
   coverage:
@@ -29,7 +30,6 @@ jobs:
       uses: lukka/run-vcpkg@v11
       with:
         vcpkgGitCommitId: ${{ env.VCPKG_COMMIT }}
-        doNotSetGHActionsCacheVars: true
     
     - name: Configure CMake with Coverage
       run: |
