@@ -79,6 +79,7 @@ jobs:
       uses: lukka/run-vcpkg@v11
       with:
         vcpkgGitCommitId: ${{ env.VCPKG_COMMIT }}
+        doNotSetGHActionsCacheVars: true
     
     - name: Create vcpkg cache directory
       run: mkdir -p ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
@@ -140,6 +141,7 @@ jobs:
       uses: lukka/run-vcpkg@v11
       with:
         vcpkgGitCommitId: ${{ env.VCPKG_COMMIT }}
+        doNotSetGHActionsCacheVars: true
     
     - name: Create vcpkg cache directory
       run: mkdir -p ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
@@ -193,6 +195,7 @@ jobs:
       uses: lukka/run-vcpkg@v11
       with:
         vcpkgGitCommitId: ${{ env.VCPKG_COMMIT }}
+        doNotSetGHActionsCacheVars: true
     
     - name: Create vcpkg cache directory
       run: mkdir -p ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
@@ -246,6 +249,7 @@ jobs:
       uses: lukka/run-vcpkg@v11
       with:
         vcpkgGitCommitId: ${{ env.VCPKG_COMMIT }}
+        doNotSetGHActionsCacheVars: true
     
     - name: Create vcpkg cache directory
       run: mkdir -p ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
@@ -301,6 +305,7 @@ jobs:
       uses: lukka/run-vcpkg@v11
       with:
         vcpkgGitCommitId: ${{ env.VCPKG_COMMIT }}
+        doNotSetGHActionsCacheVars: true
     
     - name: Create vcpkg cache directory
       run: New-Item -ItemType Directory -Force -Path ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}
@@ -368,6 +373,7 @@ jobs:
       uses: lukka/run-vcpkg@v11
       with:
         vcpkgGitCommitId: ${{ env.VCPKG_COMMIT }}
+        doNotSetGHActionsCacheVars: true
     
     - name: Create vcpkg cache directory
       run: New-Item -ItemType Directory -Force -Path ${{ env.VCPKG_DEFAULT_BINARY_CACHE }}

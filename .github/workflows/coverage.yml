@@ -29,6 +29,7 @@ jobs:
       uses: lukka/run-vcpkg@v11
       with:
         vcpkgGitCommitId: ${{ env.VCPKG_COMMIT }}
+        doNotSetGHActionsCacheVars: true
     
     - name: Configure CMake with Coverage
       run: |
